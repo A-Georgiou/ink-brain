@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { validateBoard } from "../src/shared/board.mjs";
 import { compile } from "../src/shared/mathexpr.mjs";
 import { validateScene } from "../src/shared/scene.mjs";
 import { bubbleSpot, cropAround, describeMarks, modelImageSize, overlapArea, shapeToOverlay, validateShape } from "../src/shared/geometry.mjs";
@@ -106,4 +107,12 @@ test("board expressions compile without eval and say what is wrong", () => {
     assert.equal(compile("-x^2", ["x"])({ x: 3 }), -9);
     assert.throws(() => compile("sinx", ["x"]), /unknown name "sinx"/);
     assert.throws(() => compile("alert(1)", ["x"]), /unknown name "alert"/);
+});
+
+test("boards check their equations' parts, plots and variables", () => {
+    const board = { vars: { a: 1 }, elements: [{ id: "eq", type: "tex", tex: "\\part{lhs}{a^2} = b" }, { id: "ax", type: "axes" }, { id: "f", type: "plot", on: "ax", fn: "a*x^2" }, { id: "t", type: "tangent", on: "f", x: "a" }] };
+    assert.equal(validateBoard(board, [[{ do: "highlight", target: "eq.lhs" }, { do: "set", vars: { a: 2 } }]]), null);
+    assert.match(validateBoard(board, [[{ do: "color", target: "eq.rhs" }]]), /"eq" has no \\part\{rhs\}/);
+    assert.match(validateBoard({ elements: [{ id: "f", type: "plot", fn: "x" }] }), /plot "f" needs on/);
+    assert.match(validateBoard(board, [[{ do: "set", vars: { b: 2 } }]]), /set b: declare it in the board's vars/);
 });
