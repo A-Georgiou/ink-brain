@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <title>Ink Brain</title>
+    <link rel="stylesheet" href="overlay.css" />
+    <script type="module" src="overlay.js"></script>
+</head>
+<body>
+    <div id="glow" aria-hidden="true"></div>
+    <div id="shutter" aria-hidden="true"></div>
+    <div id="boards" aria-hidden="true"></div>
+    <svg id="annotations" aria-hidden="true"></svg>
+    <div id="labels" aria-hidden="true"></div>
+    <canvas id="ink"></canvas>
+    <div id="panels"></div>
+    <div id="ripples" aria-hidden="true"></div>
+
+    <div id="pointer" class="hidden" aria-hidden="true">
+        <svg viewBox="0 0 28 28" width="28" height="28"><path d="M4 3 L24 13 L14.6 15.6 L10 25 Z" /></svg>
+        <span class="pointer-label"></span>
+    </div>
+
+    <section id="bubble" class="card interactive hidden" aria-live="polite">
+        <header>
+            <span class="badge"><span class="mini-orb"></span><span class="bubble-target">Ink Brain</span></span>
+            <span class="bubble-activity"></span>
+            <button type="button" class="icon-button bubble-stop" title="Stop speaking"></button>
+            <button type="button" class="icon-button bubble-close" title="Dismiss"></button>
+        </header>
+        <p class="bubble-question"></p>
+        <div class="bubble-body markdown"></div>
+    </section>
+
+    <div id="dock" class="interactive hidden">
+        <button type="button" id="dock-orb" class="orb" title="Ask Ink Brain"></button>
+        <span id="dock-text"></span>
+    </div>
+
+    <form id="composer" class="card interactive hidden" autocomplete="off">
+        <div class="orb"></div>
+        <input id="prompt" type="text" spellcheck="false" />
+        <button type="button" id="target" class="chip" title="Where your question goes (click to change)"></button>
+        <button type="button" id="mic" class="icon-button" title="Voice input"></button>
+        <button type="button" id="stay" class="icon-button" title="Talk hands-free"></button>
+    </form>
+    <div id="hint" class="hidden">Drag to circle &middot; click to point &middot; speak or type &middot; Enter to send &middot; Esc to close</div>
+
+    <section id="setup" class="card interactive hidden">
+        <h2>Set up Ink Brain</h2>
+        <p class="muted">Ink Brain Helper needs a few macOS permissions. Nothing leaves your Mac until you ask Ink Brain something.</p>
+        <ul class="perm-list">
+            <li data-kind="screen"><div><strong>Screen Recording</strong><span>So Ink Brain can see what you point at.</span></div><button type="button" class="chip">Grant</button></li>
+            <li data-kind="microphone"><div><strong>Microphone</strong><span>So you can talk to Ink Brain.</span></div><button type="button" class="chip">Grant</button></li>
+            <li data-kind="speech"><div><strong>Speech Recognition</strong><span>Transcribes your voice on-device.</span></div><button type="button" class="chip">Grant</button></li>
+            <li data-kind="control"><div><strong>Accessibility (optional)</strong><span>Lets Ink Brain click and type for you, only after you approve each time.</span></div><button type="button" class="chip">Grant</button></li>
+        </ul>
+        <p class="muted small">After turning on Screen Recording in System Settings, restart the helper.</p>
+        <div class="row">
+            <button type="button" class="chip" data-action="restart">Restart helper</button>
+            <span class="spacer"></span>
+            <button type="button" class="chip primary" data-action="done">Done</button>
+        </div>
+    </section>
+
+    <section id="web-card" class="card interactive hidden" aria-live="assertive">
+        <h2 class="web-title"></h2>
+        <p class="muted small web-url"></p>
+        <p class="muted small">Ink Brain reads the page in the background, signed out, and only sees its text and links.</p>
+        <div class="row">
+            <button type="button" class="chip" data-decision="deny">Don't allow</button>
+            <span class="spacer"></span>
+            <button type="button" class="chip web-always" data-decision="always"></button>
+            <button type="button" class="chip primary" data-decision="once">Allow once</button>
+        </div>
+    </section>
+
+    <section id="approval" class="card interactive hidden">
+        <h2 class="approval-title"></h2>
+        <p class="muted approval-detail"></p>
+        <p class="muted small">It will see a screenshot whenever it asks to look, and can send its answers to your screen and speakers.</p>
+        <div class="row">
+            <span class="spacer"></span>
+            <button type="button" class="chip" data-action="deny">Not now</button>
+            <button type="button" class="chip primary" data-action="allow">Allow</button>
+        </div>
+    </section>
+
+    <section id="control-card" class="card interactive hidden" aria-live="assertive">
+        <h2 class="control-origin"></h2>
+        <p class="control-reason"></p>
+        <ol class="control-steps"></ol>
+        <p class="muted small">You will see Ink Brain's cursor. Press Esc or move your mouse to stop it at any time.</p>
+        <div class="row">
+            <button type="button" class="chip" data-decision="deny">Don't allow</button>
+            <span class="spacer"></span>
+            <button type="button" class="chip" data-decision="always">Allow for this conversation</button>
+            <button type="button" class="chip primary" data-decision="once">Allow once</button>
+        </div>
+    </section>
+
+    <div id="control-banner" class="interactive" aria-live="polite">
+        <span class="control-dot"></span>
+        <span>Ink Brain is controlling your Mac &middot; press Esc or move the mouse to stop</span>
+        <button type="button" id="control-stop" class="chip">Stop</button>
+    </div>
+
+    <div id="captions" class="hidden" aria-live="polite">
+        <div class="caption-steps"></div>
+        <p class="caption-text"></p>
+    </div>
+
+    <div id="toasts"></div>
+</body>
+</html>
