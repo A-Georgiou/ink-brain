@@ -3,7 +3,12 @@ import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import path from "node:path";
 
-const FALLBACK_MODELS = ["claude-opus-5.5", "claude-sonnet-5.5", "gpt-6-sol", "claude-haiku-5.5"];
+const FALLBACK_MODELS = ["gpt-6.1-terra", "claude-opus-5.5", "claude-sonnet-5.5", "gpt-6.1-sol", "claude-haiku-5.5"];
+// Models whose best balance of speed and quality in the evals is not low effort.
+const EFFORTS = { "gpt-6.1-terra": "medium" };
+
+// The configured reasoning effort, or the one the evals found best for this model.
+export const effortFor = (model, configured) => configured ?? EFFORTS[model] ?? "low";
 
 // Emits delta(text), message(text), preparing({ name }), tool({ name }), idle() and error(Error).
 export class EmbeddedBrain extends EventEmitter {
@@ -46,7 +51,7 @@ export class EmbeddedBrain extends EventEmitter {
         const options = {
             clientName: "ink-brain",
             model: this.model,
-            reasoningEffort: this.config.reasoningEffort,
+            reasoningEffort: effortFor(this.model, this.config.reasoningEffort),
             streaming: true,
             workingDirectory: this.workspace,
             tools: this.tools,

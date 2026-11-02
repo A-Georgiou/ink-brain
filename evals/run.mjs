@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { app, BrowserWindow, nativeImage, protocol, session } from "electron";
-import { EmbeddedBrain } from "../src/main/brain.mjs";
+import { EmbeddedBrain, effortFor } from "../src/main/brain.mjs";
 import { DEFAULTS } from "../src/main/config.mjs";
 import { ExplainPlayer } from "../src/main/explain.mjs";
 import { readImageFile, saveCutout } from "../src/main/images.mjs";
@@ -27,6 +27,7 @@ const option = (name, fallback) => (argv.includes(`--${name}`) ? argv[argv.index
 const LABEL = option("label", new Date().toISOString().slice(0, 16).replace(/\D/g, ""));
 const OUT = path.join(here, "results", LABEL);
 const CONFIG = { ...DEFAULTS, model: option("model", DEFAULTS.model), reasoningEffort: option("effort", DEFAULTS.reasoningEffort) };
+const EFFORT = effortFor(CONFIG.model, CONFIG.reasoningEffort);
 // One judge from each family under test, so neither family grades only itself.
 const JUDGE = { models: option("judge", "gpt-6.1-sol,claude-opus-5.5").split(","), effort: "medium" };
 const GEOMETRY = { displayId: 1, bounds: { x: 0, y: 0, ...SCREEN }, ...SCREEN, scale: 1, modelWidth: SCREEN.width, modelHeight: SCREEN.height };
@@ -338,12 +339,12 @@ app.whenReady().then(async () => {
     const categories = option("category", "").split(",").filter(Boolean);
     const chosen = SCENARIOS.filter((s) => (!only.length || only.includes(s.id)) && (!categories.length || categories.includes(s.category)));
     const jobs = chosen.flatMap((scenario) => Array.from({ length: Number(option("repeat", 1)) }, (_, i) => [scenario, i + 1]));
-    console.log(`Eval ${LABEL}: ${jobs.length} runs of ${CONFIG.model} (${CONFIG.reasoningEffort}), judged by ${judge ? JUDGE.models.join(" and ") : "nobody"}`);
+    console.log(`Eval ${LABEL}: ${jobs.length} runs of ${CONFIG.model} (${EFFORT}), judged by ${judge ? JUDGE.models.join(" and ") : "nobody"}`);
     const results = await pool(jobs, Number(option("parallel", 4)), ([scenario, attempt]) => evaluate(scenario, attempt, { reader, client, judge }));
     // Re-running some scenarios into an existing label replaces just those.
     const summaryFile = path.join(OUT, "summary.json");
     const earlier = fs.existsSync(summaryFile) ? JSON.parse(fs.readFileSync(summaryFile, "utf8")).results.filter((r) => !results.some((n) => n.id === r.id)) : [];
-    const summary = summarize(LABEL, [...earlier, ...results], { model: CONFIG.model, effort: CONFIG.reasoningEffort, judge: JUDGE.models.join("+") });
+    const summary = summarize(LABEL, [...earlier, ...results], { model: CONFIG.model, effort: EFFORT, judge: JUDGE.models.join("+") });
     fs.writeFileSync(summaryFile, JSON.stringify(summary, null, 1));
     printReport([summary]);
     await client.stop();

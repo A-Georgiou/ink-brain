@@ -14,8 +14,9 @@ export const MODELS_DIR = path.join(os.homedir(), ".ink-brain", "models");
 
 export const DEFAULTS = {
     hotkey: "Alt+Shift+Space",
-    model: "claude-opus-5.5",
-    reasoningEffort: "low",
+    model: "gpt-6.1-terra",
+    // null runs each model at the effort that balanced speed and quality best in the evals.
+    reasoningEffort: null,
     useCustomInstructions: false,
     defaultTarget: "auto",
     stayLive: false,
