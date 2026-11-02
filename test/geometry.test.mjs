@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { validateScene } from "../src/shared/scene.mjs";
 import { bubbleSpot, cropAround, describeMarks, modelImageSize, overlapArea, shapeToOverlay, validateShape } from "../src/shared/geometry.mjs";
 
 test("model screenshots are capped at the configured long edge", () => {
@@ -39,6 +40,52 @@ test("marks are described in screenshot coordinates", () => {
         "circled the region x=50, y=50, w=50, h=30",
         "pointed at (25, 30)",
     ]);
+});
+
+test("scene validation tells the model exactly what to fix", () => {
+    const scene = { objects: [{ id: "engine", type: "group" }, { id: "piston", type: "box", parent: "engine" }] };
+    assert.equal(validateScene(scene, [[{ do: "flow", id: "fuel", from: "piston", to: [0, 2, 0] }], [{ do: "hide", target: "fuel" }]]), null);
+    assert.match(validateScene({ objects: [{ id: "force", type: "arrow" }] }), /arrow "force" needs from and to/);
+    assert.match(validateScene({ objects: [{ id: "a", type: "group", parent: "b" }, { id: "b", type: "group", parent: "a" }] }), /each other's parents/);
+    assert.match(validateScene(scene, [[{ do: "move", target: "valve" }]]), /step 1: move targets unknown object "valve"/);
+});
+
+test("grid copies and wires can be pointed at part by part", () => {
+    const scene = {
+        objects: [
+            { id: "header", type: "box", grid: [20, 2], order: "columns" },
+            { id: "screen", type: "box" },
+            { id: "power", type: "wire", from: "header#1", to: "screen" },
+        ],
+    };
+    assert.equal(validateScene(scene, [[{ do: "highlight", target: "header#40" }, { do: "show", target: "power" }, { do: "flow", along: "power" }]]), null);
+    assert.match(validateScene(scene, [[{ do: "label", target: "header#41", text: "?" }]]), /unknown object "header#41"/);
+    assert.match(validateScene({ objects: [...scene.objects, { id: "loose", type: "wire", from: "header#1", to: "nowhere" }] }), /wire "loose" end "nowhere"/);
+});
+
+test("parts stand on a base at their place in the picture", () => {
+    const board = { id: "board", type: "base", region: { x: 600, y: 300, w: 400, h: 260 }, size: [85, 1.6], material: "pcb", holes: [[612, 312, 6]] };
+    const port = { id: "dsi", type: "part", part: "ffc", on: "board", at: [612, 420], footprint: [10, 60] };
+    assert.equal(validateScene({ objects: [board, port, { id: "ribbon", type: "wire", style: "ribbon", from: [0, 2, -6], to: "dsi" }] }), null);
+    assert.match(validateScene({ objects: [{ id: "board", type: "base" }] }), /base "board" needs region/);
+    assert.match(validateScene({ objects: [board, { ...port, part: "usb-z" }] }), /part "dsi" has unknown part "usb-z"/);
+    assert.match(validateScene({ objects: [{ ...port, on: "nothing" }] }), /"dsi" is on "nothing", which is not a base/);
+    assert.match(validateScene({ objects: [board, { ...port, at: undefined }] }), /"dsi" needs at: \[x, y\]/);
+    assert.match(validateScene({ objects: [{ id: "bracket", type: "extrude", points: [[0, 0], [1, 0]] }] }), /extrude "bracket" needs at least three/);
+});
+
+test("bodies can be lofted, hinged, mirrored and cut", () => {
+    const body = { id: "body", type: "loft", sections: [{ at: -2, width: 1.8, height: 0.6 }, { at: 2, width: 1.6, height: 0.3, round: 0.4 }], cut: ["arch"] };
+    const arch = { id: "arch", type: "cylinder", mirror: "z" };
+    const door = { id: "door", type: "box", pivot: [1, 0.7, 0.9], mirror: "z" };
+    assert.equal(validateScene({ objects: [body, arch, door] }, [[{ do: "rotate", target: "door", to: [0, 0, -70] }]]), null);
+    assert.match(validateScene({ objects: [{ ...body, sections: [{ at: 0, width: 1 }], cut: undefined }] }), /loft "body" needs at least two sections/);
+    assert.match(validateScene({ objects: [body, arch, { ...door, pivot: [1, 2] }] }), /"door" pivot must be \[x, y, z\]/);
+    assert.match(validateScene({ objects: [body] }), /"body" cuts with "arch", which is not another object's id/);
+    const traced = { id: "car", type: "loft", region: { x: 500, y: 470, w: 480, h: 120 }, outline: [[500, 580], [700, 470], [980, 520], [980, 590]], size: [478, 203] };
+    const spokes = { id: "spokes", type: "box", on: "car", at: [620, 555], radial: 5, axis: "z" };
+    assert.equal(validateScene({ objects: [traced, spokes] }, [[{ do: "highlight", target: "spokes#5" }]]), null);
+    assert.match(validateScene({ objects: [traced, { ...spokes, radial: 1 }] }), /"spokes" radial must be a whole number/);
 });
 
 test("the answer sits by the user's marks, moves off what Copilot draws there, and does not hop for a slightly closer spot", () => {
