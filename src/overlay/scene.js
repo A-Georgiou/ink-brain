@@ -905,6 +905,7 @@ export async function renderScene(spec, { root, makeLabel, inPlace = false }) {
     resize.observe(root);
     return {
         step,
+        addSteps: (more) => steps.push(...more),
         dispose() {
             cancelAnimationFrame(raf);
             clearTimeout(timer);

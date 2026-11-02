@@ -40,6 +40,7 @@ function explainer() {
         scene: async (args, steps) => (log.push(`scene ${args.id} ${steps.map((actions) => actions.length)}`), { text: "ok", id: args.id }),
         board: async (args, steps) => (log.push(`board ${args.id} ${steps.map((actions) => actions.length)}`), { text: "ok", id: args.id }),
         sceneStep: async (id, index) => log.push(`step ${id} ${index}`),
+        addSteps: async (id, steps) => (log.push(`add ${id} ${steps.map((actions) => actions.length)}`), { problems: [] }),
     };
     const speak = (text) => {
         const line = {};
@@ -104,6 +105,41 @@ test("a board explanation opens the board and steps it with the narration, dropp
     assert.deepEqual(log.slice(1), ["start Look", "step explain-1-board 0"]);
     lines[0].end();
     assert.match((await played).text, /board step 1: color targets "eq.b", but "eq" has no \\part\{b\}/);
+});
+
+test("a streamed explanation starts once its stage and first step are written, and later steps join as they arrive", async () => {
+    const { player, log, lines } = explainer();
+    const move = (y) => [{ do: "move", target: "piston", by: [0, y, 0] }];
+    const args = { title: "Strokes {1} and [2]", scene: { objects: [{ id: "piston", type: "cylinder" }] }, steps: [{ say: "Down", scene: move(-1) }, { say: "Up", scene: move(1) }] };
+    const text = JSON.stringify(args);
+    const cut = text.indexOf('{"say":"Up"');
+    assert.equal([...text.slice(0, cut)].map((c) => player.feed("call-1", c)).filter(Boolean).length, 1);
+    await tick();
+    assert.deepEqual(log, ["scene explain-1-scene 1"]);
+    lines[0].start();
+    await tick();
+    assert.deepEqual(log.slice(1), ["start Down", "step explain-1-scene 0"]);
+    for (const c of text.slice(cut)) player.feed("call-1", c);
+    const played = player.play(args, "call-1");
+    lines[0].end();
+    lines[1].start();
+    await tick();
+    assert.deepEqual(log.slice(3), ["end Down", "start Up", "add explain-1-scene 1", "step explain-1-scene 1"]);
+    lines[1].end();
+    assert.match((await played).text, /Narrated all 2 steps/);
+});
+
+test("a streamed explanation whose call never finishes plays the steps it has once the turn closes", async () => {
+    const { player, log, lines } = explainer();
+    const text = JSON.stringify({ title: "t", steps: [{ say: "Only" }, { say: "Cut off" }] });
+    player.feed("call-2", text.slice(0, text.indexOf("Cut off")));
+    await tick();
+    lines[0].start();
+    lines[0].end();
+    player.close();
+    await tick();
+    await tick();
+    assert.equal(log.at(-1), "expire explain-1");
 });
 
 test("interrupting an explanation stops it and reports how far it got", async () => {

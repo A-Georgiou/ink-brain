@@ -682,10 +682,10 @@ async function look({ region } = {}) {
     return { text: parts.join(" "), images: shot.images };
 }
 
-async function runTool(name, args, origin = STANDALONE) {
+async function runTool(name, args, origin = STANDALONE, callId = undefined) {
     send("live:activity", { name, origin: origin.label });
     try {
-        const result = await surface.execute(name, args, origin);
+        const result = await surface.execute(name, args, origin, callId);
         try {
             keepArtefact(name, args, result);
         } catch (error) {
@@ -702,7 +702,7 @@ function sdkTools() {
         ...spec,
         skipPermission: true,
         defer: "never",
-        handler: async (args) => toToolResult(await runTool(spec.name, args)),
+        handler: async (args, invocation) => toToolResult(await runTool(spec.name, args, STANDALONE, invocation?.toolCallId)),
     }));
 }
 
@@ -1018,6 +1018,13 @@ function wireBrain(brain) {
         if (DEBUG) console.log(`[turn ${turn.id}] preparing ${name} at ${Date.now() - turn.startedAt} ms`);
         send("live:turn", { type: "preparing", id: turn.id, name });
     });
+    // An explanation starts playing while the model is still writing its later steps.
+    brain.on("input", ({ id, name, delta }, key) => {
+        const turn = turnFor(key);
+        if (!turn || name !== "live_explain" || !explainer.feed(id, delta)) return;
+        if (DEBUG) console.log(`[turn ${turn.id}] streaming ${name} at ${Date.now() - turn.startedAt} ms`);
+        send("live:turn", { type: "tool", id: turn.id, name });
+    });
     brain.on("tool", ({ name }, key) => {
         const turn = turnFor(key);
         if (!turn) return;
@@ -1051,6 +1058,7 @@ function finishTurn(turn, error) {
     turn.done = true;
     if (DEBUG) console.log(`[turn ${turn.id}] ${error ? `failed: ${error.message}` : "done"} after ${Date.now() - turn.startedAt} ms`);
     if (currentTurn === turn) currentTurn = null;
+    explainer.close();
     if (!error) speak(turn.chunker.flush(), `turn-${turn.id}`);
     if (!error && memoryOn() && (turn.text.trim() || turn.made.length)) {
         safely(() => {
@@ -1075,6 +1083,7 @@ async function cancelTurn() {
     webEpoch++;
     for (const finish of [...webRequests.values()]) finish("deny");
     stopSpeaking();
+    explainer.close();
     state.thinking = false;
     send("live:turn", { type: "end", id: turn.id, cancelled: true });
     turn.resolveEnded({ text: turn.text.trim(), cancelled: true });
@@ -1329,7 +1338,7 @@ function createTools() {
         config,
         regionImage,
         readImage: (file) => readImageFile(file, imageRoots()),
-        explain: (args) => explainer.play(args),
+        explain: (args, origin, callId) => explainer.play(args, callId),
         cutout,
         image: showImage,
         control: (args, origin) => controller.run(args, origin),

@@ -38,12 +38,13 @@ export class Surface {
         Object.assign(this, { overlayCall, look, say, geometry, config, regionImage, readImage, explain, cutout, image, control, read, memory });
     }
 
-    async execute(name, args = {}, origin = "Ink Brain") {
+    // callId identifies the model's tool call, so an explanation already playing from its streamed arguments carries on.
+    async execute(name, args = {}, origin = "Ink Brain", callId = undefined) {
         switch (name) {
             case "live_annotate":
                 return this.#annotate(args);
             case "live_explain":
-                return this.explain({ ...args, steps: asObject(args.steps), scene: asObject(args.scene), board: asObject(args.board) }, origin);
+                return this.explain({ ...args, steps: asObject(args.steps), scene: asObject(args.scene), board: asObject(args.board) }, origin, callId);
             case "live_panel":
                 return this.#panel({ ...args, scene: asObject(args.scene), board: asObject(args.board) });
             case "live_cutout":
@@ -149,6 +150,20 @@ export class Surface {
 
     sceneStep(id, index) {
         return this.overlayCall("scene-step", { id, index }).catch(() => {});
+    }
+
+    // Adds narrated steps to a stage already on screen, from step first on; board transforms whose TeX fails are dropped.
+    async addSteps(id, steps, { board = null, first = 0 } = {}) {
+        const problems = [];
+        const kept = steps.map((actions, index) =>
+            actions.filter((action) => {
+                const bad = board && action?.do === "transform" && texProblem(board, [[action]]);
+                if (bad) problems.push(`board step ${first + index + 1}: ${bad}`);
+                return !bad;
+            }),
+        );
+        await this.overlayCall("scene-steps", { id, steps: kept }).catch(() => {});
+        return { problems };
     }
 
     async #showPanel(args, kind, content) {

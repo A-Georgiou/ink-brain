@@ -10,7 +10,7 @@ const EFFORTS = { "gpt-6.1-terra": "medium" };
 // The configured reasoning effort, or the one the evals found best for this model.
 export const effortFor = (model, configured) => configured ?? EFFORTS[model] ?? "low";
 
-// Emits delta(text), message(text), preparing({ name }), tool({ name }), idle() and error(Error).
+// Emits delta(text), message(text), preparing({ name }), input({ id, name, delta }), tool({ name }), idle() and error(Error).
 export class EmbeddedBrain extends EventEmitter {
     id = "standalone";
     label = "Ink Brain";
@@ -69,12 +69,19 @@ export class EmbeddedBrain extends EventEmitter {
         this.sessionId = session.sessionId;
         session.on("assistant.message_delta", (event) => this.emit("delta", event.data.deltaContent ?? ""));
         session.on("assistant.message", (event) => this.emit("message", event.data.content ?? ""));
-        // Tool names stream long before their arguments finish, so the overlay can show what is coming.
-        const preparing = new Set();
+        // Tool names and arguments stream long before a call finishes, so the overlay can show and start what is coming.
+        const calls = new Map();
         session.on("assistant.tool_call_delta", ({ data }) => {
-            if (!data.toolName || preparing.has(data.toolCallId)) return;
-            preparing.add(data.toolCallId);
-            this.emit("preparing", { name: data.toolName });
+            const call = calls.get(data.toolCallId) ?? { name: null, pending: "" };
+            calls.set(data.toolCallId, call);
+            if (!call.name && data.toolName) {
+                call.name = data.toolName;
+                this.emit("preparing", { name: call.name });
+            }
+            call.pending += data.inputDelta ?? "";
+            if (!call.name || !call.pending) return;
+            this.emit("input", { id: data.toolCallId, name: call.name, delta: call.pending });
+            call.pending = "";
         });
         session.on("tool.execution_start", (event) => this.emit("tool", { name: event.data.toolName }));
         session.on("session.idle", () => this.emit("idle"));

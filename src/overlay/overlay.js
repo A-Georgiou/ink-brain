@@ -379,6 +379,7 @@ const captions = (() => {
             bubble.minimize(true);
             dodge();
         } else if (event.type === "step") {
+            while (steps.children.length < event.total) steps.append(document.createElement("i"));
             [...steps.children].forEach((dot, index) => dot.classList.toggle("done", index <= event.index));
             line.textContent = event.text;
             el.classList.remove("hidden");
@@ -569,6 +570,7 @@ api.on("live:call", async ({ id, method, params }) => {
             result = await panels.showImage(params);
             bubble.reflow();
         } else if (method === "scene-step") panels.step(params.id, params.index);
+        else if (method === "scene-steps") panels.addSteps(params.id, params.steps);
         else if (method === "clear") {
             const visibleOnly = params.scope === "visible";
             if (params.target !== "panels") annotations.clear(params.id, params.group, { visibleOnly });

@@ -878,6 +878,10 @@ function build(spec, world, katex) {
             played = index;
             settle = 2;
         },
+        addSteps(more) {
+            steps.push(...more);
+            for (const action of more.flat()) if (action?.do === "set") for (const [name, v] of Object.entries(action.vars ?? {})) if (!Number.isInteger(v)) whole.delete(name);
+        },
         frame(t) {
             now = t;
             const busy = tweens.length || flows.size || settle > 0 || easing;
@@ -965,6 +969,7 @@ export async function renderBoard(spec, { root }) {
     resize.observe(root);
     return {
         step: (index) => board.step(index),
+        addSteps: (more) => board.addSteps(more),
         dispose() {
             cancelAnimationFrame(raf);
             clearTimeout(timer);

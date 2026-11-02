@@ -52,6 +52,14 @@ export class Panels {
         return panel && !panel.el.classList.contains("away") ? panel.el.getBoundingClientRect() : null;
     }
 
+    // Appends narrated steps to a motion-graphics scene while its explanation is still being written.
+    addSteps(id, steps) {
+        const panel = this.#panels.get(id);
+        if (!panel) return;
+        panel.added.push(...steps);
+        if (panel.sent) panel.frame?.contentWindow?.postMessage({ type: "steps", steps }, "*");
+    }
+
     // Moves a motion-graphics scene to a narrated step; a frame still loading gets it once ready.
     step(id, index) {
         const panel = this.#panels.get(id);
@@ -64,6 +72,7 @@ export class Panels {
         const isNew = !this.#panels.has(id);
         const panel = this.#open(id, kind, title, frameless);
         panel.step = null;
+        panel.added = [];
         panel.autoSize = !frameless && !Number.isFinite(rect.width) && !Number.isFinite(rect.height) && isNew;
         if (frameless) this.#cover(panel, rect);
         else this.#layout(panel, kind, rect, isNew);
@@ -343,6 +352,7 @@ export class Panels {
         frame.title = panel.el.querySelector(".panel-title").textContent;
         frame.src = SANDBOX_URL;
         panel.frame = frame;
+        panel.sent = false;
         panel.el.querySelector(".panel-body").replaceChildren(frame);
         this.#frames.set(frame.contentWindow, panel);
         return new Promise((resolve) => {
@@ -369,7 +379,9 @@ export class Panels {
         if (!panel || !data || typeof data !== "object") return;
         if (data.type === "ready" && panel.pending) {
             event.source.postMessage({ kind: panel.pending.kind, content: panel.pending.content, image: panel.pending.image, inPlace: panel.el.classList.contains("frameless") }, "*");
+            if (panel.added?.length) event.source.postMessage({ type: "steps", steps: panel.added }, "*");
             if (Number.isInteger(panel.step)) event.source.postMessage({ type: "step", index: panel.step }, "*");
+            panel.sent = true;
         } else if (data.type === "rendered") {
             panel.pending?.finish({ ok: true });
         } else if (data.type === "error") {

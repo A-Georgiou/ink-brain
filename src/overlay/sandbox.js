@@ -4,6 +4,7 @@ const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 let dispose = null;
 let stage = null;
 let pendingStep = -1;
+let pendingSteps = [];
 
 const report = (message) => parent.postMessage(message, "*");
 const describe = (error) => String(error?.message ?? error).slice(0, 2000);
@@ -14,6 +15,12 @@ addEventListener("unhandledrejection", (event) => report({ type: "error", messag
 addEventListener("message", async (event) => {
     if (event.source !== parent || !event.data || typeof event.data !== "object") return;
     // Narration advances a scene; steps that arrive while it builds play once it is ready.
+    if (event.data.type === "steps") {
+        const more = Array.isArray(event.data.steps) ? event.data.steps : [];
+        if (stage) stage.addSteps(more);
+        else pendingSteps.push(...more);
+        return;
+    }
     if (event.data.type === "step") {
         const index = Number(event.data.index);
         if (stage) stage.step(index);
@@ -28,6 +35,7 @@ addEventListener("message", async (event) => {
         dispose = null;
         stage = null;
         pendingStep = -1;
+        pendingSteps = [];
         root.replaceChildren();
         root.className = "";
         if (kind === "mermaid") await renderMermaid(String(content));
@@ -39,6 +47,7 @@ addEventListener("message", async (event) => {
                     ? await (await import("./scene.js")).renderScene(spec, { root, makeLabel, inPlace })
                     : await (await import("./board.js")).renderBoard(spec, { root });
             dispose = stage.dispose;
+            if (pendingSteps.length) stage.addSteps(pendingSteps.splice(0));
             if (pendingStep >= 0) stage.step(pendingStep);
         } else if (kind === "html") return renderHtml(String(content), imageUrl);
         else throw new Error(`Unsupported panel kind: ${kind}`);
