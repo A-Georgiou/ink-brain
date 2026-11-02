@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { anchorAt, pageState, pageTitle } from "../src/shared/anchors.mjs";
 import { validateBoard } from "../src/shared/board.mjs";
 import { compile } from "../src/shared/mathexpr.mjs";
 import { validateScene } from "../src/shared/scene.mjs";
@@ -42,6 +43,29 @@ test("marks are described in screenshot coordinates", () => {
         "circled the region x=50, y=50, w=50, h=30",
         "pointed at (25, 30)",
     ]);
+});
+
+const chrome = { id: 7, page: "Docs", x: 0, y: 30, w: 900, h: 700 };
+const terminal = { id: 9, page: "zsh", x: 950, y: 30, w: 500, h: 700 };
+
+test("drawings stay with their page: hidden on another tab or Space, back and following the window on return", () => {
+    assert.equal(pageTitle("(3) Inbox - Mail"), pageTitle("Inbox - Mail"));
+    assert.equal(pageTitle("● main.ts - ink-brain"), "main.ts - ink-brain");
+    const anchor = anchorAt([terminal, chrome], { x: 100, y: 100 });
+    assert.equal(anchor.id, chrome.id);
+    assert.equal(anchorAt([terminal, chrome], null).id, terminal.id);
+    const box = { x: 100, y: 100, w: 200, h: 100 };
+    assert.deepEqual(pageState([terminal, chrome], anchor, box), { visible: true, dx: 0, dy: 0 });
+    assert.equal(pageState([{ ...chrome, page: "Other tab" }], anchor, box).visible, false);
+    assert.equal(pageState([terminal], anchor, box).visible, false);
+    assert.deepEqual(pageState([{ ...chrome, x: 40, y: 80 }], anchor, box), { visible: true, dx: 40, dy: 50 });
+});
+
+test("a page hides when another window covers its drawings, not when it sits beside them", () => {
+    const anchor = anchorAt([chrome], { x: 100, y: 100 });
+    const box = { x: 100, y: 100, w: 200, h: 100 };
+    assert.equal(pageState([{ ...terminal, x: 0 }, chrome], anchor, box).visible, false);
+    assert.equal(pageState([{ ...terminal, x: 600 }, chrome], anchor, box).visible, true);
 });
 
 test("scene validation tells the model exactly what to fix", () => {
