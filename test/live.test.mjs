@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
+import { Controller } from "../src/main/control.mjs";
 import { ExplainPlayer } from "../src/main/explain.mjs";
 import { clearStaleGrants } from "../src/main/helper.mjs";
 import { readImageFile } from "../src/main/images.mjs";
@@ -111,6 +112,54 @@ test("interrupting an explanation stops it and reports how far it got", async ()
     await tick();
     player.cancel();
     assert.match((await played).text, /interrupted the explanation after 0 of 2 steps/);
+});
+
+function controller({ decision = "once", moves = [] } = {}) {
+    const acts = [];
+    const asks = [];
+    const positions = [{ x: 0, y: 0 }, ...moves];
+    const helper = {
+        request: async (method, params) => {
+            if (method === "input.status") return { allowed: true, ...(positions.length > 1 ? positions.shift() : positions[0]) };
+            if (method === "input.act") {
+                acts.push(params.action);
+                return { x: params.x ?? 0, y: params.y ?? 0 };
+            }
+            return {};
+        },
+    };
+    const control = new Controller({
+        helper,
+        config: { control: "ask" },
+        look: async () => ({ text: "screen", images: [] }),
+        approve: async (request) => (asks.push(request.origin.label), decision),
+        setControlling: () => {},
+        toScreen: (x, y) => ({ x, y }),
+        showPointer: () => {},
+    });
+    return { control, acts, asks };
+}
+
+const click = { action: "click", x: 0, y: 0 };
+
+test("control does nothing unless the user approves, and remembers approval only for that caller", async () => {
+    const denied = controller({ decision: "deny" });
+    assert.equal((await denied.control.run({ reason: "r", actions: [click] })).failed, true);
+    assert.deepEqual(denied.acts, []);
+
+    const allowed = controller({ decision: "always" });
+    await allowed.control.run({ reason: "r", actions: [click] }, { id: "cli", label: "CLI" });
+    await allowed.control.run({ reason: "r", actions: [click] }, { id: "cli", label: "CLI" });
+    await allowed.control.run({ reason: "r", actions: [click] }, { id: "other", label: "Other" });
+    assert.deepEqual(allowed.asks, ["CLI", "Other"]);
+    assert.deepEqual(allowed.acts, ["click", "click", "click"]);
+});
+
+test("control stops as soon as the user moves the mouse", async () => {
+    const { control, acts } = controller({ moves: [{ x: 0, y: 0 }, { x: 200, y: 50 }] });
+    const result = await control.run({ reason: "r", actions: [click, { action: "type", text: "hi" }] });
+    assert.deepEqual(acts, ["click"]);
+    assert.match(result.text, /Stopped after 1 of 2 actions because the user moved the mouse/);
 });
 
 test("stale grant cleanup never clears a granted permission or the ones macOS re-prompts for", async () => {
