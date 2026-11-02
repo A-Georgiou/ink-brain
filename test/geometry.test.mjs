@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { compile } from "../src/shared/mathexpr.mjs";
 import { validateScene } from "../src/shared/scene.mjs";
 import { bubbleSpot, cropAround, describeMarks, modelImageSize, overlapArea, shapeToOverlay, validateShape } from "../src/shared/geometry.mjs";
 
@@ -98,4 +99,11 @@ test("the answer sits by the user's marks, moves off what Copilot draws there, a
     assert.notEqual(moved.name, first.name);
     assert.equal(overlapArea(moved.box, [anchor, diagram]), 0);
     assert.equal(place({ current: "beside-right" }).name, "beside-right");
+});
+
+test("board expressions compile without eval and say what is wrong", () => {
+    assert.equal(compile("2x^2 - sin(a x)", ["x", "a"])({ x: 3, a: 0 }), 18);
+    assert.equal(compile("-x^2", ["x"])({ x: 3 }), -9);
+    assert.throws(() => compile("sinx", ["x"]), /unknown name "sinx"/);
+    assert.throws(() => compile("alert(1)", ["x"]), /unknown name "alert"/);
 });
