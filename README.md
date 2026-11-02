@@ -153,6 +153,14 @@ node scripts/debug.mjs state      # drive a debug instance (state, snapshot, too
 
 Set `INK_BRAIN_HOME` to run a test instance with its own settings next to your real one.
 
+The eval suite plays real-world scenarios (circled equations, photos to model in 3D, pages to research, controls to find, code and diagrams) through Ink Brain's own brain, tools and overlay, and a vision model scores what you would see and hear:
+
+```bash
+npm run eval:capture              # capture the scenario pages once (fixtures stay local)
+npm run eval -- --label mine      # run and judge every scenario (--only, --category, --repeat)
+npm run eval:report -- base mine  # compare runs, by category and scenario
+```
+
 ## Limitations
 
 - macOS only. The overlay covers the display under your cursor when you press the hotkey.
