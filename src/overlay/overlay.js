@@ -253,18 +253,29 @@ function createBubble() {
     let hideTimer = 0;
     let slot = null;
     let jump = true;
+    let label = "";
+    let labelSince = 0;
 
     const hide = () => el.classList.add("hidden");
     const scheduleHide = (ms = 30_000) => {
         clearTimeout(hideTimer);
         hideTimer = setTimeout(() => !el.matches(":hover") && hide(), ms);
     };
+    const showActivity = (next) => {
+        [label, labelSince] = [next, Date.now()];
+        activity.textContent = next;
+    };
+    // A step that runs long counts its seconds, so a slow answer never looks frozen.
+    setInterval(() => {
+        const seconds = Math.floor((Date.now() - labelSince) / 1000);
+        if (active && label && seconds >= 5) activity.textContent = `${label} (${seconds}s)`;
+    }, 1000);
 
     el.querySelector(".bubble-close").addEventListener("click", () => {
         hide();
         api.command("dismiss");
     });
-    el.querySelector(".bubble-stop").addEventListener("click", () => api.command("stopSpeaking"));
+    el.querySelector(".bubble-stop").addEventListener("click", () => api.command(active ? "cancelTurn" : "stopSpeaking"));
     el.addEventListener("mouseenter", () => clearTimeout(hideTimer));
     el.addEventListener("mouseleave", () => !active && scheduleHide(10_000));
 
@@ -311,21 +322,19 @@ function createBubble() {
             [turnId, active, text, anchor, slot] = [turn.id, true, "", turn.anchor, null];
             question.textContent = turn.question ? `"${turn.question}"` : "";
             target.textContent = turn.target;
-            activity.textContent = "Looking at your screen";
+            showActivity("Looking at your screen");
             open();
         },
         append(delta) {
             text += delta;
-            activity.textContent = "";
+            showActivity("");
             schedule();
         },
-        activity(label) {
-            activity.textContent = label;
-        },
+        activity: showActivity,
         end(turn) {
             if (turn.id !== turnId) return;
             active = false;
-            activity.textContent = turn.error ? "Something went wrong" : "";
+            showActivity(turn.error ? "Something went wrong" : "");
             if (turn.error && !text.trim()) text = `*${turn.error}*`;
             if (turn.cancelled && !text.trim()) return hide();
             schedule();
@@ -335,7 +344,7 @@ function createBubble() {
             [turnId, active, text, anchor, slot] = [-1, false, message, null, null];
             question.textContent = "";
             target.textContent = "Copilot";
-            activity.textContent = "";
+            showActivity("");
             open();
             scheduleHide();
         },

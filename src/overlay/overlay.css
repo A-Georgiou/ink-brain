@@ -627,7 +627,7 @@ body.thinking .mini-orb {
     text-overflow: ellipsis;
 }
 
-body:not(.speaking) .bubble-stop {
+body:not(.speaking):not(.thinking) .bubble-stop {
     display: none;
 }
 
