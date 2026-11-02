@@ -33,9 +33,9 @@ function texProblem(board, steps) {
 export class Surface {
     #panelCount = 0;
 
-    // Tool handlers take (args, origin) and memory (name, args, origin); image readers return data URLs.
-    constructor({ overlayCall, look, say, geometry, config, regionImage, readImage, explain, cutout, image, control, read, memory }) {
-        Object.assign(this, { overlayCall, look, say, geometry, config, regionImage, readImage, explain, cutout, image, control, read, memory });
+    // Tool handlers take (args, origin) and memory (name, args, origin); image readers return data URLs; snap(shapes) may move marks onto real controls.
+    constructor({ overlayCall, look, say, geometry, config, regionImage, readImage, explain, cutout, image, control, read, memory, snap = null }) {
+        Object.assign(this, { overlayCall, look, say, geometry, config, regionImage, readImage, explain, cutout, image, control, read, memory, snap });
     }
 
     // callId identifies the model's tool call, so an explanation already playing from its streamed arguments carries on.
@@ -70,24 +70,26 @@ export class Surface {
         }
     }
 
-    // Validates, scales and draws shapes, returning how many were drawn, the drawing time and any problems.
+    // Validates, snaps, scales and draws shapes, returning how many were drawn and snapped, the drawing time and any problems.
     async drawShapes(shapes, { clear = true, ttl, group } = {}) {
         const { scale } = this.geometry();
         const problems = [];
         const valid = [];
         for (const [index, shape] of (Array.isArray(shapes) ? shapes.slice(0, 40) : []).entries()) {
             const problem = validateShape(shape);
-            if (problem) {
-                problems.push(`shape ${index + 1}: ${problem}`);
-                continue;
-            }
-            const mapped = { ...shapeToOverlay(shape, scale), id: cleanId(shape.id) || undefined };
-            if (shape.kind === "lens") mapped.image = await this.regionImage(shape).catch(() => null);
-            valid.push(mapped);
+            if (problem) problems.push(`shape ${index + 1}: ${problem}`);
+            else valid.push(shape);
         }
-        if (!valid.length) return { drawn: 0, duration: 0, problems };
-        const result = await this.overlayCall("annotate", { shapes: valid, clear, ttl: ttl ?? this.config.annotationTtlSeconds, group });
-        return { drawn: valid.length, duration: result?.duration ?? 0, problems };
+        if (!valid.length) return { drawn: 0, snapped: 0, duration: 0, problems };
+        const placed = this.snap ? await this.snap(valid).catch(() => valid) : valid;
+        const mapped = [];
+        for (const shape of placed) {
+            const out = { ...shapeToOverlay(shape, scale), id: cleanId(shape.id) || undefined };
+            if (shape.kind === "lens") out.image = await this.regionImage(shape).catch(() => null);
+            mapped.push(out);
+        }
+        const result = await this.overlayCall("annotate", { shapes: mapped, clear, ttl: ttl ?? this.config.annotationTtlSeconds, group });
+        return { drawn: mapped.length, snapped: placed.filter((shape, index) => shape !== valid[index]).length, duration: result?.duration ?? 0, problems };
     }
 
     clearGroup(group) {
@@ -100,10 +102,11 @@ export class Surface {
 
     async #annotate(args) {
         const ttl = Number.isFinite(args.ttl_seconds) ? Math.max(0, args.ttl_seconds) : undefined;
-        const { drawn, problems } = await this.drawShapes(args.shapes, { clear: args.clear !== false, ttl });
+        const { drawn, snapped, problems } = await this.drawShapes(args.shapes, { clear: args.clear !== false, ttl });
         if (!drawn) return { text: `Nothing was drawn. ${problems.join("; ")}`, failed: true };
+        const onto = snapped ? `, ${snapped} snapped onto the control${snapped === 1 ? "" : "s"} under ${snapped === 1 ? "it" : "them"}` : "";
         const skipped = problems.length ? ` Skipped invalid shapes: ${problems.join("; ")}.` : "";
-        return { text: `Drew ${drawn} shape${drawn === 1 ? "" : "s"} on the user's screen.${skipped}` };
+        return { text: `Drew ${drawn} shape${drawn === 1 ? "" : "s"} on the user's screen${onto}.${skipped}` };
     }
 
     async #panel(args) {

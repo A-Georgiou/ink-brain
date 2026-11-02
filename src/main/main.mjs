@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, powerMonitor, protocol, screen, session, shell, Tray, utilityProcess } from "electron";
 import { installExtension } from "../../scripts/install-extension.mjs";
 import { pageTitle } from "../shared/anchors.mjs";
-import { boundsOfMarks, cropAround, isRegion, modelImageSize, panelRect } from "../shared/geometry.mjs";
+import { boundsOfMarks, cropAround, isRegion, modelImageSize, panelRect, snapPoint, snapShape } from "../shared/geometry.mjs";
 import { STANDALONE_TOOLS, TOOL_NAMES, toToolResult } from "../shared/live-tools.mjs";
 import { SpeechChunker } from "../shared/speech.mjs";
 import { EmbeddedBrain, LinkedBrain } from "./brain.mjs";
@@ -355,6 +355,7 @@ function setPen(on, { submitted = false } = {}) {
         stopSpeaking();
         penFront = null;
         frontmost().then((front) => {
+            prepareElements(front);
             if (state.pen) penFront = front;
         });
         if (state.voiceIn) startListening();
@@ -630,6 +631,22 @@ async function requestPermission(kind) {
 }
 
 // ---------------------------------------------------------------- screen capture and tools
+
+// Some apps (Chromium, Electron) build their accessibility tree only when asked, so ask as soon as a question starts.
+const prepareElements = (front) => front?.pid && helper.request("elements.prepare", { pid: front.pid }).catch(() => {});
+
+// Marks that pick out one control snap onto it, using the accessibility elements on top of the screen there.
+async function snapShapes(shapes) {
+    const wanted = shapes.map(snapPoint);
+    if (!wanted.some(Boolean)) return shapes;
+    const g = geometry;
+    const points = wanted.filter(Boolean).map(([x, y]) => [g.bounds.x + x / g.scale, g.bounds.y + y / g.scale]);
+    const found = await helper.request("elements.at", { points, excludePid: process.pid }, { timeoutMs: 4_000 }).catch(() => null);
+    if (!found?.allowed) return shapes;
+    const model = ({ role, frame: [x, y, w, h] }) => ({ role, x: (x - g.bounds.x) * g.scale, y: (y - g.bounds.y) * g.scale, w: w * g.scale, h: h * g.scale });
+    let next = 0;
+    return shapes.map((shape, index) => (wanted[index] ? snapShape(shape, (found.elements[next++] ?? []).map(model)) : shape));
+}
 
 // A region in screenshot pixels as overlay pixels, clamped to the display.
 function displayRect(region) {
@@ -1135,6 +1152,7 @@ async function runTurn({ text, marks }) {
         const [shot, app] = await Promise.all([captureScreen({ marks }), front?.app ? front : frontmost()]);
         if (turn.done) return turn.ended;
         turn.front = app;
+        prepareElements(app);
         const { remembered, recent } = memoryContext(brain, app);
         const prompt = buildTurnPrompt({ text, marks, geometry, cursor: cursorInDisplay(), front: app, heard: recentHeard(), crop: shot.crop, linked: brain !== embedded, turnId: turn.key, remembered, recent });
         const attachments = shot.images.map((image, index) => ({ type: "blob", data: image.data, mimeType: image.mimeType, displayName: index ? "zoom.jpg" : "screen.jpg" }));
@@ -1344,6 +1362,7 @@ function createTools() {
         control: (args, origin) => controller.run(args, origin),
         read: readWeb,
         memory: memoryTool,
+        snap: snapShapes,
     });
     // A plain Chrome user agent, so sites serve the reader the same page they serve the user.
     reader = new Reader({ BrowserWindow, session, userAgent: app.userAgentFallback.replace(new RegExp(` (${escapeRegExp(app.getName())}|Electron)/\\S+`, "g"), "") });

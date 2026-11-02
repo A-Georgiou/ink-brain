@@ -923,6 +923,89 @@ enum Input {
     }
 }
 
+// MARK: - Screen elements (marks snap onto the real controls under them; needs the Accessibility permission)
+
+enum Elements {
+    // Chromium browsers build their web accessibility tree only once an assistive app asks for it.
+    private static let chromium: Set<String> = ["com.google.Chrome", "com.google.Chrome.beta", "com.google.Chrome.canary", "com.microsoft.edgemac", "com.brave.Browser", "company.thebrowser.Browser", "com.vivaldi.Vivaldi", "com.operasoftware.Opera", "org.chromium.Chromium"]
+    // Everything below runs on this queue, so its state needs no locking and the main thread never waits on another app.
+    private static let queue = DispatchQueue(label: "elements", qos: .userInitiated)
+    private static var askedAt = [pid_t: Date]()
+
+    static func prepare(_ pid: pid_t) {
+        queue.async { _ = ask(pid) }
+    }
+
+    // Asks an app to build its tree and returns how long until it answers; 0 once it does, or when it cannot be asked.
+    private static func ask(_ pid: pid_t) -> TimeInterval {
+        guard pid > 0, AXIsProcessTrusted() else { return 0 }
+        if let at = askedAt[pid] { return max(0, 2.5 - Date().timeIntervalSince(at)) }
+        let app = AXUIElementCreateApplication(pid)
+        var asked = AXUIElementSetAttributeValue(app, "AXManualAccessibility" as CFString, kCFBooleanTrue) == .success
+        if let bundle = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier, chromium.contains(bundle) {
+            asked = AXUIElementSetAttributeValue(app, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue) == .success || asked
+        }
+        askedAt[pid] = asked ? Date() : .distantPast
+        return asked ? 2.5 : 0
+    }
+
+    // For each point, the topmost element there and its ancestors, innermost first, as { role, frame: [x, y, w, h] } in screen points.
+    static func at(_ args: [String: Any], reply: @escaping ([String: Any]) -> Void) {
+        guard AXIsProcessTrusted() else { return reply(["allowed": false]) }
+        let skip = (args["excludePid"] as? NSNumber)?.int32Value ?? 0
+        let points = ((args["points"] as? [[NSNumber]]) ?? []).map { $0.count == 2 ? CGPoint(x: $0[0].doubleValue, y: $0[1].doubleValue) : CGPoint(x: -1, y: -1) }
+        queue.async {
+            let apps = owners(points, skip: skip)
+            // An app asked for its tree a moment ago answers properly about two seconds later.
+            let wait = Set(apps.compactMap { $0 }).map(ask).max() ?? 0
+            if wait > 0 { Thread.sleep(forTimeInterval: wait) }
+            reply(["allowed": true, "elements": zip(points, apps).map { point, pid in pid.map { chain(in: $0, at: point) } ?? [] }])
+        }
+    }
+
+    // The app whose window is on top at each point, leaving out the skipped app (the overlay) and system layers such as the Dock.
+    private static func owners(_ points: [CGPoint], skip: pid_t) -> [pid_t?] {
+        let windows = (CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]) ?? []
+        let shown: [(pid: pid_t, bounds: CGRect)] = windows.compactMap { info in
+            guard let pid = info[kCGWindowOwnerPID as String] as? Int, pid != Int(skip),
+                  (info[kCGWindowLayer as String] as? Int ?? 0) < 20, (info[kCGWindowAlpha as String] as? Double ?? 1) > 0,
+                  let bounds = info[kCGWindowBounds as String] as? NSDictionary, let rect = CGRect(dictionaryRepresentation: bounds) else { return nil }
+            return (pid_t(pid), rect)
+        }
+        return points.map { point in shown.first { $0.bounds.contains(point) }?.pid }
+    }
+
+    // The element under a point in one app and its ancestors.
+    private static func chain(in pid: pid_t, at point: CGPoint) -> [[String: Any]] {
+        let app = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(app, 0.3)
+        var hit: AXUIElement?
+        guard AXUIElementCopyElementAtPosition(app, Float(point.x), Float(point.y), &hit) == .success, var current = hit else { return [] }
+        var chain: [[String: Any]] = []
+        for _ in 0..<6 {
+            if let frame = frame(of: current), frame.width > 0, frame.height > 0 {
+                chain.append(["role": value(current, kAXRoleAttribute) as? String ?? "", "frame": [frame.minX, frame.minY, frame.width, frame.height]])
+            }
+            guard let parent = value(current, kAXParentAttribute), CFGetTypeID(parent) == AXUIElementGetTypeID() else { break }
+            current = parent as! AXUIElement
+        }
+        return chain
+    }
+
+    private static func value(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
+        var value: CFTypeRef?
+        return AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success ? value : nil
+    }
+
+    private static func frame(of element: AXUIElement) -> CGRect? {
+        guard let position = value(element, kAXPositionAttribute), let size = value(element, kAXSizeAttribute) else { return nil }
+        var point = CGPoint.zero
+        var extent = CGSize.zero
+        guard AXValueGetValue(position as! AXValue, .cgPoint, &point), AXValueGetValue(size as! AXValue, .cgSize, &extent) else { return nil }
+        return CGRect(origin: point, size: extent)
+    }
+}
+
 // MARK: - Commands
 
 func handle(_ command: String, id: Any, args: [String: Any]) {
@@ -938,6 +1021,11 @@ func handle(_ command: String, id: Any, args: [String: Any]) {
         Task { await ScreenCapture.capture(id: id, args: args) }
     case "frontmost":
         Out.reply(id, AppContext.frontmost(excluding: (args["excludePids"] as? [NSNumber] ?? []).map(\.intValue)))
+    case "elements.prepare":
+        Elements.prepare((args["pid"] as? NSNumber)?.int32Value ?? 0)
+        Out.reply(id)
+    case "elements.at":
+        Elements.at(args) { Out.reply(id, $0) }
     case "windows.watch":
         WindowWatch.start(args)
         Out.reply(id)

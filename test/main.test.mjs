@@ -79,6 +79,19 @@ test("annotations are scaled to the overlay and invalid shapes are reported", as
     assert.match(result.text, /Drew 1 shape .*shape 2: arrow needs from and to/);
 });
 
+test("marks snap onto real controls before they are scaled, and the model hears about it", async () => {
+    const calls = [];
+    const surface = new Surface({
+        overlayCall: async (method, params) => calls.push(params),
+        geometry: () => ({ scale: 0.5 }),
+        config: { annotationTtlSeconds: 45 },
+        snap: async (shapes) => shapes.map((shape) => (shape.kind === "rect" ? { ...shape, x: 104, w: 20 } : shape)),
+    });
+    const result = await surface.execute("live_annotate", { shapes: [{ kind: "rect", x: 100, y: 50, w: 30, h: 10 }, { kind: "write", x: 1, y: 2, text: "hi" }] });
+    assert.deepEqual(calls[0].shapes[0], { kind: "rect", x: 208, y: 100, w: 40, h: 20, id: undefined });
+    assert.match(result.text, /Drew 2 shapes on the user's screen, 1 snapped onto the control under it\./);
+});
+
 test("panel render errors go back to the model so it can fix them", async () => {
     const { surface } = surfaceWith({ ok: false, error: "Parse error on line 2" });
     const result = await surface.execute("live_panel", { kind: "mermaid", id: "flow", content: "graph TD; A-->" });

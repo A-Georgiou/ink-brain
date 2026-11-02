@@ -4,7 +4,7 @@ import { anchorAt, pageState, pageTitle } from "../src/shared/anchors.mjs";
 import { clearSpot, validateBoard } from "../src/shared/board.mjs";
 import { compile } from "../src/shared/mathexpr.mjs";
 import { validateScene } from "../src/shared/scene.mjs";
-import { bubbleSpot, cropAround, describeMarks, modelImageSize, overlapArea, shapeToOverlay, validateShape } from "../src/shared/geometry.mjs";
+import { bubbleSpot, cropAround, describeMarks, modelImageSize, overlapArea, shapeToOverlay, snapShape, validateShape } from "../src/shared/geometry.mjs";
 
 test("model screenshots are capped at the configured long edge", () => {
     assert.deepEqual(modelImageSize(1512, 982), { width: 1512, height: 982, scale: 1 });
@@ -148,4 +148,18 @@ test("board text steps the shortest way off earlier text, back onto the board, a
     assert.deepEqual(clearSpot({ x: 520, y: 330, w: 300, h: 60 }, [eq], 1600, 900), [0, 64]);
     assert.deepEqual(clearSpot({ x: 1500, y: 400, w: 300, h: 60 }, [], 1600, 900), [-210, 0]);
     assert.deepEqual(clearSpot({ x: 560, y: 320, w: 200, h: 40 }, [{ ...eq, frame: true }], 1600, 900), [0, 0]);
+});
+
+test("marks snap onto the control under them, and only when it plausibly is what they meant", () => {
+    const button = [
+        { role: "AXStaticText", x: 205, y: 229, w: 30, h: 16 },
+        { role: "AXButton", x: 190, y: 223, w: 60, h: 28 },
+        { role: "AXWebArea", x: 160, y: 192, w: 760, h: 428 },
+    ];
+    const fieldset = [{ role: "AXGroup", x: 192, y: 291, w: 225, h: 91 }];
+    assert.deepEqual(snapShape({ kind: "rect", x: 186, y: 219, w: 70, h: 36 }, button), { kind: "rect", x: 190, y: 223, w: 60, h: 28 });
+    assert.deepEqual(snapShape({ kind: "rect", x: 150, y: 180, w: 400, h: 120 }, button), { kind: "rect", x: 150, y: 180, w: 400, h: 120 });
+    assert.deepEqual(snapShape({ kind: "pulse", x: 214, y: 236 }, button), { kind: "pulse", x: 220, y: 237 });
+    assert.deepEqual(snapShape({ kind: "arrow", from: [220, 330], to: [220, 240] }, button).to, [220, 254]);
+    assert.deepEqual(snapShape({ kind: "pulse", x: 233, y: 363 }, fieldset), { kind: "pulse", x: 233, y: 363 });
 });

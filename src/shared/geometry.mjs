@@ -57,6 +57,48 @@ export function shapeToOverlay(shape, scale) {
     return out;
 }
 
+// Marks that pick out one thing on screen snap onto the real element there, when one plausibly is what they meant.
+const SNAP_BOXES = new Set(["circle", "rect", "highlight", "underline", "spotlight"]);
+const CONTROLS = new Set(["AXButton", "AXLink", "AXCheckBox", "AXRadioButton", "AXPopUpButton", "AXMenuButton", "AXTextField", "AXTextArea", "AXSearchField", "AXComboBox", "AXTab", "AXSlider", "AXMenuItem", "AXMenuBarItem", "AXDisclosureTriangle", "AXIncrementor", "AXSwitch", "AXToggle"]);
+// Points and arrow tips land only on a control, or failing that a bit of text or an image, never on a container.
+const LEAVES = new Set(["AXStaticText", "AXImage"]);
+const CONTROL_MAX = { w: 480, h: 160 };
+const GAP = 3;
+
+// The point whose element a shape is about, or null for shapes that never snap.
+export function snapPoint(shape) {
+    if (SNAP_BOXES.has(shape.kind) && isRegion(shape)) return [shape.x + shape.w / 2, shape.y + shape.h / 2];
+    if (["pulse", "pointer", "callout"].includes(shape.kind) && finite(shape.x, shape.y)) return [shape.x, shape.y];
+    if (shape.kind === "arrow" && isPoint(shape.to)) return shape.to;
+    return null;
+}
+
+const union = (a, b) => a.w * a.h + b.w * b.h - overlapArea(a, [b]);
+
+// Where the line from `from` to the box's centre leaves the box, just outside it.
+function edgeToward(from, box) {
+    const [cx, cy] = [box.x + box.w / 2, box.y + box.h / 2];
+    const [dx, dy] = [from[0] - cx, from[1] - cy];
+    if (Math.abs(dx) <= box.w / 2 && Math.abs(dy) <= box.h / 2) return [cx, cy];
+    const t = Math.min(dx ? (box.w / 2 + GAP) / Math.abs(dx) : Infinity, dy ? (box.h / 2 + GAP) / Math.abs(dy) : Infinity);
+    return [cx + dx * t, cy + dy * t];
+}
+
+// elements are the ones under the shape's snap point, innermost first, as { role, x, y, w, h } in screenshot pixels.
+export function snapShape(shape, elements = []) {
+    if (!elements.length) return shape;
+    if (SNAP_BOXES.has(shape.kind)) {
+        const [best, fit] = elements.map((e) => [e, overlapArea(shape, [e]) / union(shape, e)]).reduce((a, b) => (b[1] > a[1] ? b : a));
+        return fit >= 0.35 ? { ...shape, x: best.x, y: best.y, w: best.w, h: best.h } : shape;
+    }
+    const small = elements.filter((e) => e.w >= 4 && e.h >= 4 && e.w <= CONTROL_MAX.w && e.h <= CONTROL_MAX.h);
+    const target = small.find((e) => CONTROLS.has(e.role)) ?? small.find((e) => LEAVES.has(e.role));
+    if (!target) return shape;
+    if (shape.kind === "arrow") return { ...shape, to: edgeToward(shape.from, target) };
+    const [x, y] = shape.kind === "callout" && isPoint(shape.at) ? edgeToward(shape.at, target) : [target.x + target.w / 2, target.y + target.h / 2];
+    return { ...shape, x, y };
+}
+
 // Overlay rect for a panel: exactly over a region, or wherever x, y, width and height place it.
 export function panelRect(placement, over, scale) {
     if (over) return { x: over.x / scale, y: over.y / scale, width: over.w / scale, height: over.h / scale };
