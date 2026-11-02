@@ -3,6 +3,8 @@ import { renderMarkdown } from "./markdown.js";
 
 const KIND_LABEL = { markdown: "Notes", mermaid: "Diagram", three: "3D", html: "Interactive", scene: "Explainer", board: "Explainer", cutout: "Cutout", image: "Render" };
 const DEFAULT_SIZE = { markdown: [440, 380], mermaid: [600, 440], three: [560, 460], html: [600, 460], image: [520, 420], scene: [720, 540], board: [760, 520] };
+// Boards and scenes scale their content to the panel, so smaller ones become hard to read.
+const MIN_SIZE = { scene: [520, 380], board: [640, 380] };
 const SANDBOX_URL = "/overlay/sandbox.html";
 const CLOSE_ICON = `<svg viewBox="0 0 24 24" width="14" height="14"><path stroke="currentColor" stroke-width="2.2" stroke-linecap="round" d="M6 6l12 12M18 6 6 18"/></svg>`;
 
@@ -72,6 +74,7 @@ export class Panels {
             this.#dropFrame(panel);
             body.className = "panel-body markdown";
             body.innerHTML = renderMarkdown(content);
+            if (!frameless && !Number.isFinite(rect.height)) this.#fitHeight(panel);
             return { ok: true };
         }
         body.className = "panel-body";
@@ -193,7 +196,7 @@ export class Panels {
             { x: from.x, y: from.y - h - gap },
         ];
         const fits = (c) => c.x >= 12 && c.y >= 32 && c.x + w <= innerWidth - 12 && c.y + h <= innerHeight - 12;
-        return candidates.find(fits) ?? this.#autoPlace(w, h, self);
+        return candidates.find(fits) ?? this.#place(w, h, self, null, [1]);
     }
 
     // Before/after slider: sweeps in to reveal the new image, then tracks the pointer when dragged.
@@ -266,45 +269,71 @@ export class Panels {
         });
     }
 
+    // A note grows or shrinks to fit what it says, so nothing is cut off, and moves if it now needs a new spot.
+    #fitHeight(panel) {
+        const el = panel.el;
+        const body = el.querySelector(".panel-body");
+        const height = clamp(body.scrollHeight + el.offsetHeight - body.clientHeight, 160, innerHeight - 80);
+        if (Math.abs(height - el.offsetHeight) < 2) return;
+        el.style.height = `${height}px`;
+        const spot = panel.autoPlaced ? this.#place(el.offsetWidth, height, panel, null, [1]) : { x: el.offsetLeft, y: el.offsetTop };
+        el.style.left = `${clamp(spot.x, 16, innerWidth - el.offsetWidth - 16)}px`;
+        el.style.top = `${clamp(spot.y, 40, innerHeight - height - 16)}px`;
+        this.onLayout();
+    }
+
     #layout(panel, kind, rect, isNew) {
         const el = panel.el;
         const margin = 16;
         const [defaultWidth, defaultHeight] = DEFAULT_SIZE[kind];
-        const width = clamp(rect.width ?? (isNew ? defaultWidth : el.offsetWidth), 240, innerWidth - margin * 2);
-        const height = clamp(rect.height ?? (isNew ? defaultHeight : el.offsetHeight), 160, innerHeight - margin * 2);
-        let { x, y } = rect;
-        const placeSelf = !Number.isFinite(x) || !Number.isFinite(y);
+        const min = MIN_SIZE[kind] ?? [240, 160];
+        const width = clamp(rect.width ?? (isNew ? defaultWidth : el.offsetWidth), min[0], innerWidth - margin * 2);
+        const height = clamp(rect.height ?? (isNew ? defaultHeight : el.offsetHeight), min[1], innerHeight - margin * 2);
+        const placeSelf = !Number.isFinite(rect.x) || !Number.isFinite(rect.y);
         if (isNew) panel.autoPlaced = placeSelf;
-        if (placeSelf) ({ x, y } = isNew ? this.#autoPlace(width, height, panel) : { x: el.offsetLeft, y: el.offsetTop });
-        el.style.width = `${width}px`;
-        el.style.height = `${height}px`;
-        el.style.left = `${clamp(x, margin, innerWidth - width - margin)}px`;
-        el.style.top = `${clamp(y, margin + 24, innerHeight - height - margin)}px`;
+        const spot = isNew ? this.#place(width, height, panel, placeSelf ? null : rect, undefined, min) : { x: placeSelf ? el.offsetLeft : rect.x, y: placeSelf ? el.offsetTop : rect.y, w: width, h: height };
+        el.style.width = `${spot.w}px`;
+        el.style.height = `${spot.h}px`;
+        el.style.left = `${clamp(spot.x, margin, innerWidth - spot.w - margin)}px`;
+        el.style.top = `${clamp(spot.y, margin + 24, innerHeight - spot.h - margin)}px`;
     }
 
-    // The bubble and user marks are hard obstacles, other panels soft ones; earlier slots win ties.
-    #autoPlace(width, height, self) {
+    // Marks and the bubble are hard obstacles, panels soft: take the asked or first free slot, else the nearest clear one, shrinking if need be.
+    #place(width, height, self, wanted = null, scales = [1, 0.85, 0.72, 0.6], min = [240, 160]) {
         const m = 24;
         const top = 52;
         const hard = this.avoid().filter(Boolean).map(asRect);
         const soft = [...this.#panels.values()].filter((p) => p !== self && p.el.isConnected && !p.el.classList.contains("away")).map((p) => asRect(p.el.getBoundingClientRect()));
-        const candidates = [
-            { x: innerWidth - width - m, y: top },
-            { x: m, y: top },
-            { x: innerWidth - width - m, y: innerHeight - height - 130 },
-            { x: m, y: innerHeight - height - 130 },
-            { x: (innerWidth - width) / 2, y: top },
-            { x: innerWidth - width - m, y: (innerHeight - height) / 2 },
-            { x: m, y: (innerHeight - height) / 2 },
-        ];
-        const area = (c, rects) =>
-            rects.reduce((sum, o) => {
-                const w = Math.min(c.x + width, o.x + o.w) - Math.max(c.x, o.x);
-                const h = Math.min(c.y + height, o.y + o.h) - Math.max(c.y, o.y);
-                return sum + Math.max(0, w) * Math.max(0, h);
-            }, 0);
-        const cost = (c) => area(c, hard) * 4 + area(c, soft);
-        return candidates.reduce((best, candidate) => (cost(candidate) < cost(best) ? candidate : best));
+        const overlap = (c, rects) => rects.reduce((sum, o) => sum + Math.max(0, Math.min(c.x + c.w, o.x + o.w) - Math.max(c.x, o.x)) * Math.max(0, Math.min(c.y + c.h, o.y + o.h) - Math.max(c.y, o.y)), 0);
+        let fallback = null;
+        for (const k of scales) {
+            const [w, h] = [Math.round(Math.max(min[0], width * k)), Math.round(Math.max(min[1], height * k))];
+            const fit = ({ x, y }) => ({ x: clamp(x, m, innerWidth - w - m), y: clamp(y, top, innerHeight - h - m), w, h });
+            const slots = [
+                ...(wanted ? [wanted] : []),
+                { x: innerWidth - w - m, y: top },
+                { x: m, y: top },
+                { x: innerWidth - w - m, y: innerHeight - h - 130 },
+                { x: m, y: innerHeight - h - 130 },
+                { x: (innerWidth - w) / 2, y: top },
+                { x: innerWidth - w - m, y: (innerHeight - h) / 2 },
+                { x: m, y: (innerHeight - h) / 2 },
+                ...hard.flatMap((o) => [
+                    { x: o.x + o.w + m, y: o.y + o.h / 2 - h / 2 },
+                    { x: o.x - w - m, y: o.y + o.h / 2 - h / 2 },
+                    { x: o.x + o.w / 2 - w / 2, y: o.y + o.h + m },
+                    { x: o.x + o.w / 2 - w / 2, y: o.y - h - m },
+                ]),
+            ].map(fit);
+            const clear = slots.filter((c) => !overlap(c, hard));
+            if (clear.length) {
+                const cost = (c) => (wanted ? Math.hypot(c.x - wanted.x, c.y - wanted.y) : overlap(c, soft));
+                return clear.reduce((best, c) => (cost(c) < cost(best) ? c : best));
+            }
+            const crowding = (c) => overlap(c, hard) * 4 + overlap(c, soft);
+            fallback ??= slots.reduce((best, c) => (crowding(c) < crowding(best) ? c : best));
+        }
+        return fallback;
     }
 
     #renderInFrame(panel, kind, content, image = null) {
@@ -354,7 +383,7 @@ export class Panels {
             el.style.width = `${width}px`;
             el.style.height = `${height}px`;
             if (panel.autoPlaced) {
-                const spot = this.#autoPlace(width, height, panel);
+                const spot = this.#place(width, height, panel, null, [1]);
                 el.style.left = `${spot.x}px`;
                 el.style.top = `${spot.y}px`;
             }

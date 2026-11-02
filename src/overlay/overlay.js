@@ -5,7 +5,7 @@ import { Ink } from "./ink.js";
 import { renderMarkdown } from "./markdown.js";
 import { Panels } from "./panels.js";
 import { anchorAt, anchorOf, centreOf, pageState } from "/shared/anchors.mjs";
-import { boundsOfMarks, bubbleSpot, overlapArea } from "/shared/geometry.mjs";
+import { bubbleSpot, overlapArea } from "/shared/geometry.mjs";
 
 const api = window.live;
 const $ = (selector) => document.querySelector(selector);
@@ -186,7 +186,6 @@ function submit(text = prompt.value) {
     const clean = text.trim();
     const marks = ink.marks;
     if (!clean && !marks.length) return;
-    lastAnchor = boundsOfMarks(marks);
     body.classList.add("submitted");
     api.submit({ text: clean, marks });
     prompt.value = "";
@@ -395,6 +394,8 @@ api.on("live:explain", captions);
 
 api.on("live:turn", (event) => {
     if (event.type === "start") {
+        // Every turn, however it was asked, keeps new panels off what the user marked.
+        lastAnchor = event.anchor ?? null;
         pages.beginTurn(event.anchor);
         bubble.start(event);
         dockText("");
