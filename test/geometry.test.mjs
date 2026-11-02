@@ -139,6 +139,8 @@ test("boards check their equations' parts, plots and variables", () => {
     assert.match(validateBoard(board, [[{ do: "color", target: "eq.rhs" }]]), /"eq" has no \\part\{rhs\}/);
     assert.match(validateBoard({ elements: [{ id: "f", type: "plot", fn: "x" }] }), /plot "f" needs on/);
     assert.match(validateBoard(board, [[{ do: "set", vars: { b: 2 } }]]), /set b: declare it in the board's vars/);
+    assert.equal(validateBoard(board, [[{ do: "apply", matrix: [[2, 1], [0, 1]] }]]), null);
+    assert.match(validateBoard({ elements: [{ id: "eq", type: "tex", tex: "x" }] }, [[{ do: "apply", matrix: [[2, 1], [0, 1]] }]]), /apply needs axes on the board/);
 });
 
 test("board text steps the shortest way off earlier text, back onto the board, and stays put inside a box", () => {

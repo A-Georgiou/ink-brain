@@ -110,7 +110,7 @@ function actionProblem(action, names) {
         if (!names.types.has(id)) return `${action.do} targets unknown element "${target}"`;
         if (part !== undefined && !names.parts.get(id)?.has(part)) return `${action.do} targets "${target}", but "${id}" has no \\part{${part}}{...}`;
     }
-    if (!targets.length && !["set", "camera", "flow"].includes(action.do)) return `${action.do} needs a target`;
+    if (!targets.length && !["set", "camera", "flow", "apply"].includes(action.do)) return `${action.do} needs a target`;
     if (action.do === "move" && !isPair(action.to) && !isPair(action.by)) return "move needs to or by as [x, y]";
     if (action.do === "transform" && typeof action.to !== "string") return "transform needs to: the new tex, text or fn";
     if (action.do === "transform") {
@@ -127,6 +127,7 @@ function actionProblem(action, names) {
     }
     if (action.do === "apply") {
         if (targets.some((t) => names.types.get(t) !== "axes")) return "apply works on axes";
+        if (!targets.length && ![...names.types.values()].includes("axes")) return "apply needs axes on the board";
         if (!(Array.isArray(action.matrix) && action.matrix.length === 2 && action.matrix.every((row) => isPair(row) && row.every(Number.isFinite)))) return "apply needs matrix [[a, b], [c, d]]";
     }
     if (action.do === "flow" && !targets.length && !(action.from !== undefined && action.to !== undefined)) return "flow needs a target to stream along, or from and to";

@@ -822,7 +822,9 @@ function build(spec, world, katex) {
         }
         if (action.do === "camera") return aim(action, duration, delay);
         if (action.do === "flow") return flow(action, delay);
-        for (const target of [action.target].flat()) {
+        // apply with no target transforms every axes on the board.
+        const targets = action.do === "apply" && action.target === undefined ? [...items].filter(([, item]) => item.map).map(([id]) => id) : [action.target].flat();
+        for (const target of targets) {
             if (action.do === "hide" && flows.has(target)) {
                 stopFlow(target, duration);
                 continue;

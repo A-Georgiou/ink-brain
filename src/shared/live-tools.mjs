@@ -336,7 +336,7 @@ const BOARD_ACTION = {
                 "show (writes or draws it in), hide (fades it out, or removes a surround or flow by its id), move (to [x, y] or by), " +
                 "transform (to: new tex, where \\part names and identical symbols glide to their new places; new text; or a plot's or area's new fn), " +
                 "color (an element or an id.part), highlight (a swell and a flash of yellow), surround (draws a box around the target, such as an equation part; give it an id to hide it later), opacity (value), " +
-                "set (vars: animates variables, so everything using them moves: tangents slide, bars multiply, live values count), apply (matrix [[a, b], [c, d]] on axes: the plane and everything on it transforms), " +
+                "set (vars: animates variables, so everything using them moves: tangents slide, bars multiply, live values count), apply (matrix [[a, b], [c, d]] on axes, or every axes when there is no target: the plane and everything on it transforms), " +
                 "flow (dots streaming along an arrow, line, path or plot, or from and to; give it an id to stop it), camera (zooms to a target, or to [x, y] with value as the zoom; neither zooms back out).",
         },
         target: { description: "An element id, an id.part of an equation, or a list of them." },
