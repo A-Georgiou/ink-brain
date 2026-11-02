@@ -27,7 +27,8 @@ const option = (name, fallback) => (argv.includes(`--${name}`) ? argv[argv.index
 const LABEL = option("label", new Date().toISOString().slice(0, 16).replace(/\D/g, ""));
 const OUT = path.join(here, "results", LABEL);
 const CONFIG = { ...DEFAULTS, model: option("model", DEFAULTS.model), reasoningEffort: option("effort", DEFAULTS.reasoningEffort) };
-const JUDGE = { model: option("judge", "gpt-6.1-sol"), effort: "medium" };
+// One judge from each family under test, so neither family grades only itself.
+const JUDGE = { models: option("judge", "gpt-6.1-sol,claude-opus-5.5").split(","), effort: "medium" };
 const GEOMETRY = { displayId: 1, bounds: { x: 0, y: 0, ...SCREEN }, ...SCREEN, scale: 1, modelWidth: SCREEN.width, modelHeight: SCREEN.height };
 const OWN_TOOLS = new Set(STANDALONE_TOOLS.map((tool) => tool.name));
 const VISUAL_TOOLS = new Set(["live_explain", "live_panel", "live_annotate", "live_image", "live_cutout"]);
@@ -214,9 +215,9 @@ async function play(scenario, dir, { reader, client }) {
 
 const intersection = (a, b) => Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)) * Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
 
-// Whether any arrow tip, mark or box centre lands on (or just around) the target.
+// Whether any arrow tip, mark or box centre lands on the target, give or take a few pixels.
 function pointedAt(target, tools) {
-    const near = ([x, y]) => x >= target.x - 24 && x <= target.x + target.w + 24 && y >= target.y - 24 && y <= target.y + target.h + 24;
+    const near = ([x, y]) => x >= target.x - 8 && x <= target.x + target.w + 8 && y >= target.y - 8 && y <= target.y + target.h + 8;
     const shapes = tools.flatMap((t) => (t.name === "live_annotate" ? (t.args.shapes ?? []) : t.name === "live_explain" ? (t.args.steps ?? []).flatMap((s) => s.draw ?? []) : []));
     return shapes.some((s) => {
         if (Array.isArray(s.to)) return near(s.to);
@@ -295,14 +296,12 @@ async function evaluate(scenario, attempt, { reader, client, judge }) {
             screen: path.join(dir, "00-screen.jpg"),
             frames: pick(record.frames).map((frame) => ({ ...frame, path: path.join(dir, frame.file) })),
         };
-        for (let tries = 0; tries < 2 && !verdict.scores; tries++) {
-            verdict = await judge.score(input).catch((error) => ({ judgeError: error.message }));
-        }
+        verdict = await judge.score(input).catch((error) => ({ judgeError: error.message }));
     }
     const result = { id, scenario: scenario.id, category: scenario.category, ...verdict, metrics, error: record.error };
     fs.writeFileSync(path.join(dir, "result.json"), JSON.stringify(result, null, 1));
-    const scores = verdict.scores ? Object.entries(verdict.scores).map(([key, value]) => `${key} ${value}`).join(" ") : (verdict.judgeError ?? "not judged");
-    console.log(`${id.padEnd(18)} ${verdict.score?.toFixed(2) ?? " -  "}  ${scores}  | media ${metrics.media.join("+") || "none"}${metrics.mediaMatch ? "" : " (MISS)"}  visual ${metrics.firstVisual == null ? "-" : `${(metrics.firstVisual / 1000).toFixed(1)}s`}${record.error ? `  ERROR ${record.error}` : ""}`);
+    const scores = verdict.scores ? Object.entries(verdict.scores).map(([key, value]) => `${key} ${Number(value.toFixed(1))}`).join(" ") : (verdict.judgeError ?? "not judged");
+    console.log(`${id.padEnd(18)} ${verdict.score?.toFixed(2) ?? " -  "} ${verdict.scores ? (verdict.pass ? "pass" : "FAIL") : "    "}  ${scores}  | media ${metrics.media.join("+") || "none"}${metrics.mediaMatch ? "" : " (MISS)"}  visual ${metrics.firstVisual == null ? "-" : `${(metrics.firstVisual / 1000).toFixed(1)}s`}${record.error ? `  ERROR ${record.error}` : ""}`);
     return result;
 }
 
@@ -339,12 +338,12 @@ app.whenReady().then(async () => {
     const categories = option("category", "").split(",").filter(Boolean);
     const chosen = SCENARIOS.filter((s) => (!only.length || only.includes(s.id)) && (!categories.length || categories.includes(s.category)));
     const jobs = chosen.flatMap((scenario) => Array.from({ length: Number(option("repeat", 1)) }, (_, i) => [scenario, i + 1]));
-    console.log(`Eval ${LABEL}: ${jobs.length} runs of ${CONFIG.model} (${CONFIG.reasoningEffort}), judged by ${judge ? JUDGE.model : "nobody"}`);
+    console.log(`Eval ${LABEL}: ${jobs.length} runs of ${CONFIG.model} (${CONFIG.reasoningEffort}), judged by ${judge ? JUDGE.models.join(" and ") : "nobody"}`);
     const results = await pool(jobs, Number(option("parallel", 4)), ([scenario, attempt]) => evaluate(scenario, attempt, { reader, client, judge }));
     // Re-running some scenarios into an existing label replaces just those.
     const summaryFile = path.join(OUT, "summary.json");
     const earlier = fs.existsSync(summaryFile) ? JSON.parse(fs.readFileSync(summaryFile, "utf8")).results.filter((r) => !results.some((n) => n.id === r.id)) : [];
-    const summary = summarize(LABEL, [...earlier, ...results], { model: CONFIG.model, effort: CONFIG.reasoningEffort, judge: JUDGE.model });
+    const summary = summarize(LABEL, [...earlier, ...results], { model: CONFIG.model, effort: CONFIG.reasoningEffort, judge: JUDGE.models.join("+") });
     fs.writeFileSync(summaryFile, JSON.stringify(summary, null, 1));
     printReport([summary]);
     await client.stop();
