@@ -1,30 +1,69 @@
+<div align="center">
+
 # Ink Brain
 
-An always-on companion for your Mac, built on GitHub Copilot. Circle or click anything on your screen and ask about it, by voice or by typing. Ink Brain sees what you are pointing at, answers out loud, and teaches visually: it sketches on your screen while it talks, animates equations and graphs like a 3Blue1Brown video, builds 3D models of the things you ask about, and opens live demos you can play with.
+**Circle anything on your screen. Ask. See it explained.**
 
-> Ink Brain is an independent project, not an official GitHub product. It uses GitHub Copilot through the [Copilot SDK](https://github.com/github/copilot-sdk), so you need a Copilot subscription.
+An always-on companion for your Mac, built on GitHub Copilot. It sees what you point at, answers out loud and draws the explanation right on your screen.
 
-## Features
+[![macOS 14+](https://img.shields.io/badge/macOS-14%2B-000000?logo=apple&logoColor=white)](#requirements)
+[![GitHub Copilot SDK](https://img.shields.io/badge/GitHub_Copilot_SDK-8957e5?logo=githubcopilot&logoColor=white)](https://github.com/github/copilot-sdk)
+[![Electron](https://img.shields.io/badge/Electron-47848f?logo=electron&logoColor=white)](https://www.electronjs.org)
 
-- **Ask about anything on screen.** Press the hotkey, circle what you mean and talk. Ink Brain reads everything itself, including the full article or thread behind a preview, after you allow the site.
+<sub>An independent project, not an official GitHub product.</sub>
+
+</div>
+
+https://github.com/user-attachments/assets/bfc357cc-070b-46b5-9d0c-b2ad70e545f1
+
+## What it does
+
+Ink Brain lives in a transparent layer over your screen. Press the hotkey, circle what you mean and ask, by voice or by typing. It answers out loud and teaches visually, building the explanation step by step as it talks.
+
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/f158cbdc-ef4c-4d13-b480-46537a295db6" width="31%" alt="Numbered notes and arrows drawn onto the BERT figure in a research paper">&nbsp;
+  <img src="https://github.com/user-attachments/assets/1d63a879-a6f4-4708-a687-03198ebd67ef" width="31%" alt="A motion graphic working through a maths definition with real numbers">&nbsp;
+  <img src="https://github.com/user-attachments/assets/5fcafeb8-4b3f-42a6-9568-7240084c91be" width="31%" alt="A 3D model of an ESP32 wired to an LED and resistor on a breadboard">
+</p>
+
+- **Point and ask.** Circle, underline or click anything on screen, then talk or type. Ink Brain sees exactly what you marked.
 - **Hear the answer.** Replies are spoken in an on-device neural voice, with hands-free follow-ups.
-- **See the explanation.** Narrated, step-by-step explanations that build up as Ink Brain talks:
-  - hand-drawn sketches, arrows and diagrams on top of your screen
-  - 2D motion graphics for maths and dense text: equations that rearrange themselves, colour-coded terms, graphs whose variables animate, boxes and arrows with flowing dots
-  - 3D models for physical things, with parts that move on their real hinges, come apart or are cut away to show what is inside
+- **See it explained.** Narrated visuals that build up while it talks:
+  - sketches, arrows and numbered notes drawn onto the page
+  - 3Blue1Brown-style motion graphics for maths and dense text, with equations that rearrange themselves and graphs whose variables animate
+  - 3D models you can turn around, with parts that move on their real hinges, come apart or are cut away
+  - live demos you can play with
+- **Read the source.** It reads the article, thread or docs behind what you circled rather than answering from memory.
 - **Bring images to life.** Pull an image out of the screen, re-render it, or lay a live 3D or animated version over the original.
-- **Remember you.** Your projects, devices and preferences, past conversations and the visuals it made, all kept on your Mac.
+- **Remember you.** Your projects, devices, preferences and past conversations stay on your Mac.
 - **Show you how.** With your approval, it moves the mouse and types to demonstrate a step, and stops the moment you move the mouse.
 - **Work with Copilot CLI and the Copilot app.** Any session can draw and speak on your screen, and you can send questions from the overlay to a session you already have open.
 
-## Requirements
+## How it works
 
-- macOS 14 or later (Apple silicon or Intel)
-- Node.js 22.12 or later
-- Xcode Command Line Tools (`swiftc` builds the native helper)
-- A GitHub Copilot subscription, signed in with the Copilot CLI (`copilot login`)
+```mermaid
+flowchart LR
+    subgraph app ["Ink Brain (Electron)"]
+        overlay["Overlay<br>pen, sketches, boards, 3D"] <--> main["Main process<br>turns, tools, memory"]
+    end
+    you(["You<br>hotkey, pen, voice"]) --> overlay
+    main <-->|Copilot SDK| session["Built-in Copilot session"]
+    main <-->|Unix socket| linked["Copilot CLI and app sessions"]
+    main <-->|JSON lines| helper["Native helper (Swift)<br>screen capture, speech, input"]
+```
+
+Each question sends one screenshot, plus a zoomed crop around your marks, to a Copilot session with Ink Brain's `live_*` tools. The model describes what it wants to show as data, such as shapes, boards and scenes, which the overlay validates and renders, so it rarely has to write code. Equations are typeset with [KaTeX](https://katex.org), 3D uses [three.js](https://threejs.org) with [three-bvh-csg](https://github.com/gkjohnson/three-bvh-csg) for cut-outs, sketches use [rough.js](https://roughjs.com) and the voice is [Kokoro](https://github.com/hexgrad/kokoro), running on-device.
 
 ## Getting started
+
+### Requirements
+
+- macOS 14 or later, on Apple silicon or Intel
+- Node.js 22.12 or later
+- Xcode Command Line Tools, so `swiftc` can build the native helper
+- A GitHub Copilot subscription, signed in with the Copilot CLI (`copilot login`)
+
+### Install
 
 ```bash
 git clone https://github.com/A-Georgiou/ink-brain.git
@@ -35,16 +74,16 @@ npm start
 
 On first launch, a setup card asks you to allow **Ink Brain Helper** to use Screen Recording, the Microphone and Speech Recognition, and optionally Accessibility so it can operate your Mac when you approve. After switching on Screen Recording in System Settings, click **Restart helper**.
 
-The neural voice model (Kokoro, about 90 MB) downloads on first launch; Apple voices are used until it is ready. Run `npm run doctor` at any time to check the helper, permissions, screen capture and voices.
+The neural voice model (about 90 MB) downloads on first launch, and Apple voices fill in until it is ready. Run `npm run doctor` at any time to check the helper, permissions, screen capture and voices.
 
 macOS ties the helper's permissions to its exact build, so after an update that changes the helper you need to allow it again. Ink Brain clears outdated approvals when it starts, so System Settings always shows what is really allowed.
 
-## Using Ink Brain
+## Usage
 
 | To | Do this |
 | --- | --- |
-| Ask about your screen | Press **Option+Shift+Space**, circle, underline or click things, then talk or type. Press Enter, or stop talking, to send. |
-| Leave pen mode | Press Esc. Cmd+Z, Backspace or a right-click undoes your last mark. |
+| Ask about your screen | Press <kbd>Option</kbd> <kbd>Shift</kbd> <kbd>Space</kbd>, circle, underline or click things, then talk or type. Press <kbd>Enter</kbd>, or stop talking, to send. |
+| Leave pen mode | Press <kbd>Esc</kbd>. <kbd>Cmd</kbd> <kbd>Z</kbd>, <kbd>Backspace</kbd> or a right-click undoes your last mark. |
 | Follow up | Keep talking for about 12 seconds after an answer. |
 | Go hands-free | Turn on **Talk hands-free** in the menu bar and start questions with "Ink Brain". |
 | Stop or interrupt | Press the stop button on the answer, or the hotkey to ask something else. |
@@ -52,23 +91,26 @@ macOS ties the helper's permissions to its exact build, so after an update that 
 | Ask about audio | Turn on **Hear my screen** to ask about a video or call playing on your Mac (transcribed on-device). |
 | Manage memory | **Memory** in the menu bar shows what Ink Brain remembers, turns parts off or forgets everything. |
 
-Drawings and panels stay with the page they were made for: they hide when you switch tab, window or Space and come back when you return. Panels can be dragged by their title bar and resized from the corner.
+Drawings and panels stay with the page they were made for. They hide when you switch tab, window or Space and come back when you return. Drag panels by their title bar and resize them from the corner.
 
-## Copilot CLI and the Copilot app
+### Copilot CLI and the Copilot app
 
 ```bash
 npm run extension:install     # or Install Copilot CLI and App extension in the menu bar
 npm run extension:uninstall
 ```
 
-New sessions (or `/clear` in an open one) get Ink Brain's tools, so they can draw, explain and speak on your screen. If the overlay is not running, the first tool call starts it.
+New sessions, or `/clear` in an open one, get Ink Brain's tools, so they can draw, explain and speak on your screen. If the overlay is not running, the first tool call starts it.
 
 - A session must be allowed once per connection before it can see your screen, and taking control always needs its own approval.
 - The **To:** chip in the composer sends your question to a linked session instead of the built-in one. The answer is spoken and shown in the bubble, and the question appears in the session as `[Ink Brain] ...`. **Auto** picks the newest idle session you have allowed.
 
 ## Configuration
 
-Settings live in `~/.ink-brain/config.json` (**Open settings file** in the menu bar). Restart Ink Brain after editing.
+Settings live in `~/.ink-brain/config.json`, which **Open settings file** in the menu bar opens. Restart Ink Brain after editing. The environment variables `INK_BRAIN_MODEL` and `INK_BRAIN_HOTKEY` override the file, and `INK_BRAIN_HOME` points Ink Brain at a different settings folder.
+
+<details>
+<summary><b>All settings</b></summary>
 
 | Key | Default | Meaning |
 | --- | --- | --- |
@@ -102,33 +144,7 @@ Settings live in `~/.ink-brain/config.json` (**Open settings file** in the menu 
 | `voice.allowServerSpeech` | `false` | Allow Apple's server-based recognition when on-device recognition is unavailable. |
 | `voice.maxSpokenChars` | `700` | Longer answers are shown in full but only partly read aloud. |
 
-The environment variables `INK_BRAIN_MODEL` and `INK_BRAIN_HOTKEY` override the config, and `INK_BRAIN_HOME` points Ink Brain at a different settings folder.
-
-## How it works
-
-```
- hotkey, pen, voice                       Copilot CLI / app session
-        |                                          |  live_* tools
-        v                                          v
- Electron overlay (transparent,  <-- Unix socket --  session extension
- click-through, every Space)                        (extension/ink-brain.mjs)
-        |                       \
-        |  JSON lines on stdio   \  Copilot SDK
-        v                         v
- Native helper (Swift):        Built-in Copilot session
- screen capture, speech,       with the live_* tools
- audio, input, app context
-```
-
-| Path | Role |
-| --- | --- |
-| `src/main/` | Electron main process: the overlay window, menu bar, turns, the built-in session (`brain.mjs`), tools (`surface.mjs`), narrated explanations (`explain.mjs`), memory, voice, web reading, control and the socket bridge for linked sessions. |
-| `src/overlay/` | The overlay: pen, sketches, panels, answer bubble and composer. `sandbox.js` runs panel content in isolated frames, `scene.js` renders 3D scenes (with geometry in `shapes.js` and ready-made components in `parts.js`) and `board.js` 2D motion graphics. |
-| `src/shared/` | Tool definitions, scene and board vocabularies with their validation, a safe maths expression parser, geometry and the socket protocol. |
-| `extension/` | The Copilot CLI and app session extension. |
-| `native/` | The Swift helper: ScreenCaptureKit, speech recognition and synthesis, audio playback, mouse and keyboard input. |
-
-Ink Brain describes what it wants to show as data (shapes, scenes, boards), which the overlay validates and renders, so the model never has to write code for the common cases. Equations are typeset with KaTeX, 3D uses three.js with [three-bvh-csg](https://github.com/gkjohnson/three-bvh-csg) for cut-outs, and sketches use rough.js.
+</details>
 
 ## Privacy and security
 
@@ -148,18 +164,35 @@ npm test                          # unit and integration tests
 npm run lint                      # ESLint
 npm run doctor                    # native helper diagnostics
 INK_BRAIN_DEBUG=1 npm start       # turn timings and overlay console output
-node scripts/debug.mjs state      # drive a debug instance (state, snapshot, tool, turn, pen, memory, ...)
+node scripts/debug.mjs state      # inspect a running debug instance
 ```
 
-Set `INK_BRAIN_HOME` to run a test instance with its own settings next to your real one.
+Set `INK_BRAIN_HOME` to run a test instance with its own settings next to your real one. `scripts/debug.mjs` can also take snapshots, call tools, run turns and toggle the pen; the usage line at its top lists every command.
 
-The eval suite plays real-world scenarios (circled equations, photos to model in 3D, pages to research, controls to find, code and diagrams) through Ink Brain's own brain, tools and overlay, and a vision model scores what you would see and hear:
+### Evals
+
+The eval suite plays 26 real-world scenarios (circled equations, photos to model in 3D, pages to research, controls to find, code and diagrams) through Ink Brain's own brain, tools and overlay, and a vision model scores what you would see and hear. The latest round of prompt and tool tuning raised the average score from 3.67 to 3.91 out of 5.
 
 ```bash
 npm run eval:capture              # capture the scenario pages once (fixtures stay local)
-npm run eval -- --label mine      # run and judge every scenario (--only, --category, --repeat)
+npm run eval -- --label mine      # run and judge every scenario
 npm run eval:report -- base mine  # compare runs, by category and scenario
 ```
+
+Narrow a run with `--only`, `--category` or `--repeat`.
+
+### Project layout
+
+| Path | Role |
+| --- | --- |
+| `src/main/` | Electron main process: the overlay window, menu bar, turns, the built-in session (`brain.mjs`), tools (`surface.mjs`), narrated explanations (`explain.mjs`), memory, voice, web reading, control and the socket bridge for linked sessions. |
+| `src/overlay/` | The overlay: pen, sketches, panels, answer bubble and composer. `sandbox.js` runs panel content in isolated frames, `scene.js` renders 3D scenes (with geometry in `shapes.js` and ready-made components in `parts.js`) and `board.js` 2D motion graphics. |
+| `src/shared/` | Tool definitions, scene and board vocabularies with their validation, a safe maths expression parser, geometry and the socket protocol. |
+| `extension/` | The Copilot CLI and app session extension. |
+| `native/` | The Swift helper: ScreenCaptureKit, speech recognition and synthesis, audio playback, mouse and keyboard input. |
+| `evals/` | The eval suite: scenarios, page capture, the runner, the judge and reports. |
+| `scripts/` | Diagnostics, the debug driver and the extension installer. |
+| `test/` | Unit and integration tests. |
 
 ## Limitations
 
