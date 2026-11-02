@@ -17,7 +17,10 @@
     "extension:install": "node scripts/install-extension.mjs",
     "extension:uninstall": "node scripts/install-extension.mjs --uninstall",
     "test": "node --test test/*.test.mjs",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "eval:capture": "electron evals/capture.mjs",
+    "eval": "electron evals/run.mjs",
+    "eval:report": "node evals/report.mjs"
   },
   "engines": {
     "node": ">=22.12.0"

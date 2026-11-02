@@ -5,3 +5,7 @@ native/build/
 
 # Local npm settings (for example a company registry proxy)
 .npmrc
+
+# Eval fixtures and results (captured from live pages)
+evals/fixtures/
+evals/results/

@@ -9,4 +9,6 @@ export default [
     { files: ["src/overlay/**"], languageOptions: { globals: globals.browser } },
     { files: ["src/shared/**"], languageOptions: { globals: { setTimeout: "readonly", clearTimeout: "readonly" } } },
     { files: ["src/preload.cjs"], languageOptions: { sourceType: "commonjs", globals: { ...globals.node, ...globals.browser } } },
+    // Eval scripts run in Electron and pass some functions into pages.
+    { files: ["evals/**"], languageOptions: { globals: { ...globals.node, ...globals.browser } } },
 ];
