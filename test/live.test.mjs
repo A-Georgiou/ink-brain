@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
+import { ToolCalls } from "../src/main/brain.mjs";
 import { Controller } from "../src/main/control.mjs";
 import { ExplainPlayer } from "../src/main/explain.mjs";
 import { clearStaleGrants } from "../src/main/helper.mjs";
@@ -242,4 +243,27 @@ test("stopping the voice cancels sentences that are still being generated", () =
     assert.deepEqual(ends, [{ utterance: "u1", cancelled: true, idle: true }]);
     assert.equal(worker.sent.at(-1).type, "cancel");
     assert.deepEqual(requests, [["speak.stop", undefined]]);
+});
+
+test("tool calls whose request or answer got lost are answered again, once each", async () => {
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    let runs = 0;
+    const calls = new ToolCalls([{ name: "live_read", handler: async () => `read ${++runs}` }], { graceMs: 30 });
+    const answered = [];
+    const pending = [{ requestId: "lost-request", toolCallId: "c1", toolName: "live_read", arguments: {} }];
+    const session = { rpc: { tools: { listPendingRequests: async () => ({ items: pending }), handlePendingToolCall: async (answer) => answered.push(answer) } } };
+
+    await calls.rescue(session);
+    assert.equal(answered.length, 0);
+    await sleep(40);
+    await calls.rescue(session);
+    assert.deepEqual(answered, [{ requestId: "lost-request", result: "read 1" }]);
+
+    pending[0] = { ...pending[0], requestId: "lost-answer" };
+    assert.equal(await calls.tools[0].handler({}, { requestId: "lost-answer" }), "read 2");
+    await calls.rescue(session);
+    await sleep(40);
+    await calls.rescue(session);
+    assert.deepEqual(answered.at(-1), { requestId: "lost-answer", result: "read 2" });
+    assert.equal(runs, 2);
 });

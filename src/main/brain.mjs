@@ -22,11 +22,13 @@ export class EmbeddedBrain extends EventEmitter {
     #session = null;
     #starting = null;
     #recent = null;
+    #calls;
 
     // extraTools are built-in tools such as image_generation; resumeFrom() names a conversation to resume.
     constructor({ config, tools, extraTools = [], systemMessage, workspace, resumeFrom = () => null }) {
         super();
         Object.assign(this, { config, tools, extraTools, systemMessage, workspace, resumeFrom });
+        this.#calls = new ToolCalls(tools);
     }
 
     ensure() {
@@ -54,7 +56,7 @@ export class EmbeddedBrain extends EventEmitter {
             reasoningEffort: effortFor(this.model, this.config.reasoningEffort),
             streaming: true,
             workingDirectory: this.workspace,
-            tools: this.tools,
+            tools: this.#calls.tools,
             availableTools: [...this.tools.map((tool) => tool.name), ...this.extraTools],
             disabledMcpServers: [...mcp, "github-mcp-server"],
             imageGeneration: { enabled: this.extraTools.includes("image_generation") },
@@ -84,7 +86,10 @@ export class EmbeddedBrain extends EventEmitter {
             call.pending = "";
         });
         session.on("tool.execution_start", (event) => this.emit("tool", { name: event.data.toolName }));
-        session.on("session.idle", () => this.emit("idle"));
+        session.on("session.idle", () => {
+            this.#calls.stop();
+            this.emit("idle");
+        });
         session.on("session.error", (event) => this.emit("error", new Error(event.data.message || "Copilot reported an error")));
         this.#session = session;
         return session;
@@ -113,6 +118,7 @@ export class EmbeddedBrain extends EventEmitter {
     async send({ prompt, attachments }) {
         const session = await this.ensure();
         this.fresh = false;
+        this.#calls.watch(session);
         await session.send({ prompt, attachments });
     }
 
@@ -146,6 +152,7 @@ export class EmbeddedBrain extends EventEmitter {
         const session = this.#session;
         this.#session = null;
         this.fresh = true;
+        this.#calls.stop();
         await session?.disconnect().catch(() => {});
     }
 
@@ -153,6 +160,57 @@ export class EmbeddedBrain extends EventEmitter {
         await this.reset();
         await this.#client?.stop().catch(() => {});
         this.#client = null;
+    }
+}
+
+// Runs each tool request once and answers any Copilot is still waiting on because its request or answer got lost.
+export class ToolCalls {
+    #handlers;
+    #calls = new Map();
+    #timer = 0;
+
+    constructor(tools, { graceMs = 5_000 } = {}) {
+        this.graceMs = graceMs;
+        this.#handlers = new Map(tools.map((tool) => [tool.name, tool.handler]));
+        this.tools = tools.map((tool) => ({ ...tool, handler: (args, invocation) => this.run(tool.name, args, invocation) }));
+    }
+
+    run(name, args, invocation) {
+        const id = invocation?.requestId;
+        const call = this.#calls.get(id) ?? { seen: Date.now() };
+        if (!call.answer) {
+            call.answer = Promise.resolve(this.#handlers.get(name)(args, invocation)).finally(() => (call.done = Date.now()));
+            if (id) this.#calls.set(id, call);
+        }
+        return call.answer;
+    }
+
+    // A lost request or answer would leave the turn waiting forever, so check while one runs.
+    watch(session) {
+        this.stop();
+        this.#timer = setInterval(() => this.rescue(session), this.graceMs / 2);
+    }
+
+    stop() {
+        clearInterval(this.#timer);
+        this.#calls.clear();
+    }
+
+    async rescue(session) {
+        const { items = [] } = await session.rpc.tools.listPendingRequests().catch(() => ({}));
+        for (const item of items) {
+            if (!this.#handlers.has(item.toolName)) continue;
+            const call = this.#calls.get(item.requestId) ?? { seen: Date.now() };
+            this.#calls.set(item.requestId, call);
+            if ((call.answer && !call.done) || Date.now() - (call.done ?? call.seen) < this.graceMs) continue;
+            console.warn(call.answer ? `The ${item.toolName} answer never reached Copilot, so sending it again` : `The ${item.toolName} request never arrived, so running it now`);
+            const answer = await this.run(item.toolName, item.arguments ?? {}, item).then(
+                (result) => ({ result }),
+                (error) => ({ error: String(error?.message ?? error) }),
+            );
+            call.done = Date.now();
+            await session.rpc.tools.handlePendingToolCall({ requestId: item.requestId, ...answer }).catch(() => {});
+        }
     }
 }
 
