@@ -33,6 +33,8 @@ const JUDGE = { models: option("judge", "gpt-6.1-sol,claude-opus-5.5").split(","
 const GEOMETRY = { displayId: 1, bounds: { x: 0, y: 0, ...SCREEN }, ...SCREEN, scale: 1, modelWidth: SCREEN.width, modelHeight: SCREEN.height };
 const OWN_TOOLS = new Set(STANDALONE_TOOLS.map((tool) => tool.name));
 const VISUAL_TOOLS = new Set(["live_explain", "live_panel", "live_annotate", "live_image", "live_cutout"]);
+const VISUAL_CALLS = new Set(["annotate", "panel", "cutout", "image"]);
+const STREAM = !argv.includes("--no-stream");
 const TURN_TIMEOUT_MS = 8 * 60_000;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -55,7 +57,7 @@ async function play(scenario, dir, { reader, client }) {
     const screen = `data:image/jpeg;base64,${jpeg.toString("base64")}`;
     const workspace = path.join(WORK, path.basename(dir));
     const roots = [path.join(os.homedir(), ".copilot", "session-state"), workspace];
-    const record = { text: "", captions: [], tools: [], frames: [], console: [], error: null, firstWords: null, total: null };
+    const record = { text: "", captions: [], tools: [], frames: [], console: [], error: null, firstWords: null, firstVisual: null, writing: null, streamed: null, total: null };
     const stage = await openStage({ image: screen, title: meta.title, onConsole: (line) => record.console.push(line.slice(0, 400)) });
     let start = Date.now();
     const elapsed = () => Date.now() - start;
@@ -81,7 +83,11 @@ async function play(scenario, dir, { reader, client }) {
     };
 
     const surface = new Surface({
-        overlayCall: stage.call,
+        // The first visual is when something first appears on screen, which a streamed explanation does before its call finishes.
+        overlayCall(method, params, timeoutMs) {
+            if (VISUAL_CALLS.has(method)) record.firstVisual ??= elapsed();
+            return stage.call(method, params, timeoutMs);
+        },
         geometry: () => GEOMETRY,
         config: CONFIG,
         async look({ region } = {}) {
@@ -97,7 +103,7 @@ async function play(scenario, dir, { reader, client }) {
         say: async (text) => stage.send("live:turn", { type: "say", text }),
         regionImage: async (region) => `data:image/jpeg;base64,${crop(region)}`,
         readImage: (file) => readImageFile(file, roots),
-        explain: (args) => explainer.play(args),
+        explain: (args, origin, callId) => explainer.play(args, callId),
         async cutout(args) {
             if (!isRegion(args)) return { text: "live_cutout needs x, y, w and h.", failed: true };
             const id = cleanId(args.id) || "cutout";
@@ -139,11 +145,11 @@ async function play(scenario, dir, { reader, client }) {
         },
         keepSeconds: CONFIG.explanationTtlSeconds,
     });
-    const runTool = async (name, args) => {
+    const runTool = async (name, args, callId) => {
         const entry = { name, at: elapsed(), args };
         record.tools.push(entry);
         stage.send("live:activity", { name, origin: "Ink Brain" });
-        const result = await surface.execute(name, args).catch((error) => ({ text: `${name} failed: ${error.message}`, failed: true }));
+        const result = await surface.execute(name, args, "Ink Brain", callId).catch((error) => ({ text: `${name} failed: ${error.message}`, failed: true }));
         Object.assign(entry, { ms: elapsed() - entry.at, failed: Boolean(result.failed), result: String(result.text ?? "").slice(0, 600) });
         if (VISUAL_TOOLS.has(name) && name !== "live_explain" && !result.failed) snap(name, 2_500);
         return result;
@@ -151,7 +157,7 @@ async function play(scenario, dir, { reader, client }) {
 
     const brain = new EmbeddedBrain({
         config: CONFIG,
-        tools: STANDALONE_TOOLS.map((spec) => ({ ...spec, skipPermission: true, defer: "never", handler: async (args) => toToolResult(await runTool(spec.name, args)) })),
+        tools: STANDALONE_TOOLS.map((spec) => ({ ...spec, skipPermission: true, defer: "never", handler: async (args, invocation) => toToolResult(await runTool(spec.name, args, invocation?.toolCallId)) })),
         extraTools: CONFIG.imageGeneration ? ["image_generation"] : [],
         systemMessage: systemMessage({ imageGeneration: CONFIG.imageGeneration, web: true }),
         workspace,
@@ -173,6 +179,12 @@ async function play(scenario, dir, { reader, client }) {
         sawDelta = false;
     });
     brain.on("preparing", ({ name }) => stage.send("live:turn", { type: "preparing", id: 1, name }));
+    brain.on("input", ({ id, name, delta }) => {
+        if (name === "live_explain") record.writing ??= elapsed();
+        if (!STREAM || name !== "live_explain" || !explainer.feed(id, delta)) return;
+        record.streamed = elapsed();
+        stage.send("live:turn", { type: "tool", id: 1, name });
+    });
     brain.on("tool", ({ name }) => {
         stage.send("live:turn", { type: "tool", id: 1, name });
         if (!OWN_TOOLS.has(name)) record.tools.push({ name, at: elapsed(), args: {} });
@@ -199,6 +211,7 @@ async function play(scenario, dir, { reader, client }) {
         record.total = elapsed();
         record.error = error?.message ?? null;
         if (error) await brain.abort();
+        explainer.close();
         stage.send("live:turn", { type: "end", id: 1, error: record.error ?? undefined });
         stage.send("live:state", overlayState(false));
         await Promise.all(shots);
@@ -250,7 +263,7 @@ function measure(scenario, meta, record) {
         mediaMatch: scenario.expect.some((m) => media.has(m)),
         failedTools: record.tools.filter((tool) => tool.failed).length,
         firstWords: record.firstWords,
-        firstVisual: record.tools.find((tool) => VISUAL_TOOLS.has(tool.name) && !tool.failed)?.at ?? null,
+        firstVisual: record.firstVisual !== undefined ? record.firstVisual : (record.tools.find((tool) => VISUAL_TOOLS.has(tool.name) && !tool.failed)?.at ?? null),
         total: record.total,
         boardOverlaps: overlaps.size,
         boardOff: off.size,
@@ -339,12 +352,12 @@ app.whenReady().then(async () => {
     const categories = option("category", "").split(",").filter(Boolean);
     const chosen = SCENARIOS.filter((s) => (!only.length || only.includes(s.id)) && (!categories.length || categories.includes(s.category)));
     const jobs = chosen.flatMap((scenario) => Array.from({ length: Number(option("repeat", 1)) }, (_, i) => [scenario, i + 1]));
-    console.log(`Eval ${LABEL}: ${jobs.length} runs of ${CONFIG.model} (${EFFORT}), judged by ${judge ? JUDGE.models.join(" and ") : "nobody"}`);
+    console.log(`Eval ${LABEL}: ${jobs.length} runs of ${CONFIG.model} (${EFFORT}${STREAM ? "" : ", not streamed"}), judged by ${judge ? JUDGE.models.join(" and ") : "nobody"}`);
     const results = await pool(jobs, Number(option("parallel", 4)), ([scenario, attempt]) => evaluate(scenario, attempt, { reader, client, judge }));
     // Re-running some scenarios into an existing label replaces just those.
     const summaryFile = path.join(OUT, "summary.json");
     const earlier = fs.existsSync(summaryFile) ? JSON.parse(fs.readFileSync(summaryFile, "utf8")).results.filter((r) => !results.some((n) => n.id === r.id)) : [];
-    const summary = summarize(LABEL, [...earlier, ...results], { model: CONFIG.model, effort: EFFORT, judge: JUDGE.models.join("+") });
+    const summary = summarize(LABEL, [...earlier, ...results], { model: CONFIG.model, effort: EFFORT, stream: STREAM, judge: JUDGE.models.join("+") });
     fs.writeFileSync(summaryFile, JSON.stringify(summary, null, 1));
     printReport([summary]);
     await client.stop();
