@@ -1,9 +1,29 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { test } from "node:test";
 import { ExplainPlayer } from "../src/main/explain.mjs";
 import { clearStaleGrants } from "../src/main/helper.mjs";
+import { readImageFile } from "../src/main/images.mjs";
 import { Voice } from "../src/main/voice.mjs";
+
+test("images can only be read from Copilot's own image folders", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "ink-brain-images-"));
+    const allowed = path.join(root, "session-state");
+    fs.mkdirSync(path.join(allowed, "s1", "images"), { recursive: true });
+    const image = path.join(allowed, "s1", "images", "render.png");
+    fs.writeFileSync(image, "png");
+    fs.writeFileSync(path.join(allowed, "s1", "events.jsonl"), "{}");
+    fs.writeFileSync(path.join(root, "outside.png"), "png");
+    fs.symlinkSync(path.join(root, "outside.png"), path.join(allowed, "s1", "images", "link.png"));
+
+    assert.equal(readImageFile(image, [allowed]), `data:image/png;base64,${Buffer.from("png").toString("base64")}`);
+    assert.throws(() => readImageFile(path.join(root, "outside.png"), [allowed]), /Only images made by/);
+    assert.throws(() => readImageFile(path.join(allowed, "s1", "images", "link.png"), [allowed]), /Only images made by/);
+    assert.throws(() => readImageFile(path.join(allowed, "s1", "events.jsonl"), [allowed]), /Only PNG, JPEG and WebP/);
+});
 
 function explainer() {
     const log = [];
