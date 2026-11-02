@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "An always-on companion for your Mac, built on GitHub Copilot: circle anything on screen, ask out loud, and it explains with sketches, motion graphics and 3D.",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/A-Georgiou/ink-brain.git"
