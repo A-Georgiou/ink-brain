@@ -1,0 +1,7 @@
+node_modules/
+native/build/
+.DS_Store
+*.log
+
+# Local npm settings (for example a company registry proxy)
+.npmrc
