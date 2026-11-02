@@ -8,6 +8,15 @@ const PANEL_KINDS = new Set(["markdown", "mermaid", "three", "html", "scene", "b
 const MAX_PANEL_CHARS = 200_000;
 
 export const cleanId = (value) => (typeof value === "string" ? value.replace(/[^\w.-]/g, "").slice(0, 48) : "");
+// Models sometimes send a nested object as JSON text; take it as the object it describes.
+const asObject = (value) => {
+    if (typeof value !== "string") return value;
+    try {
+        return JSON.parse(value);
+    } catch {
+        return value;
+    }
+};
 
 // Typesets a board's equations up front, so TeX mistakes reach the model before anything is shown.
 function texProblem(board, steps) {
@@ -34,9 +43,9 @@ export class Surface {
             case "live_annotate":
                 return this.#annotate(args);
             case "live_explain":
-                return this.explain(args, origin);
+                return this.explain({ ...args, steps: asObject(args.steps), scene: asObject(args.scene), board: asObject(args.board) }, origin);
             case "live_panel":
-                return this.#panel(args);
+                return this.#panel({ ...args, scene: asObject(args.scene), board: asObject(args.board) });
             case "live_cutout":
                 return this.cutout(args, origin);
             case "live_image":

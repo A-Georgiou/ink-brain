@@ -77,10 +77,10 @@ function objectsProblem(scene) {
     }
     const parents = new Map(objects.map((object) => [object.id, object.parent]));
     for (const object of objects) {
-        if (object.parent === undefined) continue;
+        if (object.parent == null) continue;
         if (!ids.has(object.parent) || object.parent === object.id) return `scene object "${object.id}" has unknown parent "${object.parent}"`;
         let node = object.parent;
-        for (let hops = 0; node !== undefined && hops <= objects.length; hops++) {
+        for (let hops = 0; node != null && hops <= objects.length; hops++) {
             if (node === object.id) return `scene objects "${object.id}" and "${object.parent}" are each other's parents`;
             node = parents.get(node);
         }
