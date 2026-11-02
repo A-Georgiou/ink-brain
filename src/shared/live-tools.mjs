@@ -604,8 +604,8 @@ export const READ_TOOL = {
     name: "live_read",
     description:
         "Read a web page in the background, as a signed-out browser shows it, without touching the user's screen. Returns its text and the links in it. " +
-        "Use it when the screen only shows a preview (a feed post, headline, link, search result, video or cut-off thread) and you need the full post, article or comments, " +
-        "or to search a site for the thing the user pointed at and then read the best result. The user approves each new site.",
+        "Use it whenever the answer depends on more than the screen shows: the article, paper or video behind a link or headline, the rest of a thread with its answers, or current facts such as versions, releases and news. " +
+        "You can also search a site for the thing the user pointed at and read the best result. The user approves each new site.",
     parameters: {
         type: "object",
         properties: {

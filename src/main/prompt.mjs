@@ -3,7 +3,8 @@ import { describeMarks } from "../shared/geometry.mjs";
 import { LINKED_GUIDE } from "../shared/live-tools.mjs";
 
 const READING_WEB = `
-- When the screen only shows a preview (a post, headline, link, video or cut-off thread) and the question needs more, say what you can see first, then read the full page with live_read. Take its address from the address bar or a visible link; otherwise find it with the site's own search (new posts are rarely indexed elsewhere yet), or html.duckduckgo.com/html/?q= for sites without one, trying fewer words if nothing matches. Comments often say what a post is really about.
+- The screen often shows only part of the story. Read the full source with live_read before answering whenever the answer depends on what is not fully visible: what a linked article, paper or video says, the rest of a thread with its answers and fixes, the official docs or guide for fixing, upgrading or setting up something specific, or anything that changes over time (versions, releases, news, prices), where what you remember may be out of date. Never guess from a title or headline: say what you can see first, then read.
+- Take the address from the address bar or a visible link; otherwise find it with the site's own search (new posts are rarely indexed elsewhere yet), or html.duckduckgo.com/html/?q= for sites without one, trying fewer words if nothing matches. Comments often say what a post is really about.
 - Search only with what identifies the item, never other screen content. If a page needs a sign-in or will not load, answer from the screen.`;
 
 const READING_SCREEN = `
