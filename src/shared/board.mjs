@@ -9,8 +9,9 @@ const TEX_MACROS = { "\\part": "\\htmlClass{p-#1}{#2}", "\\val": "\\htmlClass{v-
 export const katexOptions = () => ({ macros: { ...TEX_MACROS }, trust: (context) => context.command === "\\htmlClass", strict: "ignore", throwOnError: true, output: "html" });
 
 const formatted = (value) => (Number.isInteger(value) ? String(value) : value.toFixed(Math.abs(value) < 10 ? 2 : 1));
-// Puts the current value of each variable in place of \val{name}.
-export const withValues = (source, vars) => String(source).replace(/\\val\{(\w+)\}/g, (all, name) => (Number.isFinite(vars[name]) ? formatted(vars[name]) : all));
+// Puts the current value of each variable in place of \val{name}; names in whole show rounded.
+export const withValues = (source, vars, whole = new Set()) =>
+    String(source).replace(/\\val\{(\w+)\}/g, (all, name) => (Number.isFinite(vars[name]) ? formatted(whole.has(name) ? Math.round(vars[name]) : vars[name]) : all));
 
 export const texParts = (tex) => [...String(tex ?? "").matchAll(/\\part\{([\w-]+)\}/g)].map((match) => match[1]);
 
@@ -21,7 +22,8 @@ const ON = { plot: ["axes"], area: ["axes", "plot"], dot: ["axes", "plot"], vect
 const MUST_SIT = new Set(["plot", "area", "tangent"]);
 const NEEDS = {
     tex: (e) => (typeof e.tex === "string" && e.tex.trim() !== "") || "needs tex",
-    text: (e) => (typeof e.text === "string" && e.text.trim() !== "") || "needs text",
+    // Text may start empty, as a placeholder that a later transform fills in.
+    text: (e) => typeof e.text === "string" || "needs text",
     path: (e) => (Array.isArray(e.points) && e.points.length >= 2) || "needs at least two points",
     axes: (e) => [e.x, e.y].every((r) => r === undefined || (Array.isArray(r) && r.length >= 2 && r[0] < r[1])) || "x and y must be [min, max, step] with min below max",
     plot: (e) => typeof e.fn === "string" || "needs fn, an expression in x",

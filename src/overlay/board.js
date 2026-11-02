@@ -22,6 +22,7 @@ const STYLE = `
 .board-html .katex{font-size:1em}
 .board-text{font-family:KaTeX_Main,"Times New Roman",serif}
 .board-text.sans{font-family:-apple-system,system-ui,sans-serif}
+.board-html>.board-text{white-space:pre}
 .board-text.wrap{white-space:normal;text-align:center}
 .board-html>.ghost{display:block;margin:0;overflow:hidden;white-space:nowrap}`;
 
@@ -110,6 +111,10 @@ function build(spec, world, katex) {
     const vars = { ...(spec.vars ?? {}) };
     const names = ["x", ...Object.keys(vars)];
     const steps = Array.isArray(spec.steps) ? spec.steps : [];
+    // A variable that only ever holds whole numbers, such as a count, also shows whole numbers while it animates.
+    const sets = steps.flat().filter((action) => action?.do === "set");
+    const whole = new Set(Object.keys(vars).filter((name) => [vars[name], ...sets.filter((a) => a.vars && name in a.vars).map((a) => a.vars[name])].every(Number.isInteger)));
+    const live = (source) => withValues(source, vars, whole);
     const tweens = [];
     const flows = new Map();
     const camera = { x: W / 2, y: H / 2, z: 1 };
@@ -176,14 +181,14 @@ function build(spec, world, katex) {
     };
 
     const setTex = (node, source) => {
-        katex.render(withValues(source, vars), node, katexOptions());
+        katex.render(live(source), node, katexOptions());
         node.dataset.source = source;
-        node.dataset.shown = withValues(source, vars);
+        node.dataset.shown = live(source);
     };
     const setText = (node, source) => {
-        node.replaceChildren(...String(withValues(source, vars)).split(/(\s+)/).map((word) => (/^\s*$/.test(word) ? word : Object.assign(document.createElement("span"), { textContent: word }))));
+        node.replaceChildren(...String(live(source)).split(/(\s+)/).map((word) => (/^\s*$/.test(word) ? word : Object.assign(document.createElement("span"), { textContent: word }))));
         node.dataset.source = source;
-        node.dataset.shown = withValues(source, vars);
+        node.dataset.shown = live(source);
     };
     const stroke = (item, tag, attrs = {}) =>
         svgNode(tag, { fill: "none", stroke: "currentColor", "stroke-width": item.width, "stroke-linecap": "round", "stroke-linejoin": "round", ...(item.def.dashed ? { "stroke-dasharray": "14 11" } : { pathLength: 1 }), ...attrs }, item.g);
@@ -199,7 +204,7 @@ function build(spec, world, katex) {
             node.style.color = item.textColor ?? item.color;
             item.nodes.push(node);
         }
-        if (node.dataset.source !== source || node.dataset.shown !== withValues(source, vars)) setTex(node, source);
+        if (node.dataset.source !== source || node.dataset.shown !== live(source)) setTex(node, source);
         Object.assign(node.style, { left: `${x}px`, top: `${y}px` });
         node.dataset.anchor = anchor;
     };
@@ -236,7 +241,14 @@ function build(spec, world, katex) {
     const fnOf = (item) => item.fn ?? items.get(item.def.on)?.fn ?? ((x) => value(item.def.fn, x));
     const refreshText = (item) => {
         const node = item.node;
-        if (node && /\\val\{/.test(node.dataset.source) && node.dataset.shown !== withValues(node.dataset.source, vars)) (item.def.type === "text" ? setText : setTex)(node, node.dataset.source);
+        if (node && /\\val\{/.test(node.dataset.source) && node.dataset.shown !== live(node.dataset.source)) (item.def.type === "text" ? setText : setTex)(node, node.dataset.source);
+    };
+    // Text and boxes placed by expressions of vars follow them as set animates the vars.
+    const follow = (item) => {
+        if (!item.node || !Array.isArray(item.def.at) || !item.def.at.some((v) => typeof v === "string")) return;
+        const [x, y] = TEXT_TYPES.has(item.def.type) ? pointOf(item, item.def.at) : atOf(item.def);
+        Object.assign(item.node.style, { left: `${x}px`, top: `${y}px` });
+        if (item.def.type === "box") sizeBox(item);
     };
 
     // Joins points or elements; an element end stops at its edge, facing the other end.
@@ -884,6 +896,7 @@ function build(spec, world, katex) {
             for (const item of items.values()) {
                 if (!item.attached) item.draw?.();
                 refreshText(item);
+                follow(item);
                 place(item);
             }
             easing = declutter();
