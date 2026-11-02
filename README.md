@@ -87,8 +87,8 @@ Settings live in `~/.ink-brain/config.json` (**Open settings file** in the menu 
 | `explanationTtlSeconds` | `90` | How long an explanation's drawings stay after it ends. |
 | `control` | `ask` | `ask` lets Ink Brain request control of your Mac; `off` never allows it. |
 | `imageGeneration` | `true` | Let the built-in session generate images. |
-| `web` | `ask` | `ask` lets Ink Brain read web pages, asking before each new site; `off` never allows it. |
-| `webSites` | `[]` | Sites you chose **Always allow** for, including their subdomains. |
+| `web` | `on` | `on` lets Ink Brain read web pages whenever an answer needs them; `ask` asks before each new site; `off` never allows it. |
+| `webSites` | `[]` | With `ask`, the sites you chose **Always allow** for, including their subdomains. |
 | `memory.enabled` | `true` | Remember facts, conversations and visuals. |
 | `memory.screen` | `true` | Also remember which window and page were in front, and for how long. |
 | `memory.copilotSessions` | `true` | Tell Ink Brain about your recent Copilot CLI and app sessions. |
@@ -136,7 +136,7 @@ Ink Brain describes what it wants to show as data (shapes, scenes, boards), whic
 - Speech recognition and the neural voice run on-device (unless you allow server speech).
 - Memory stays on your Mac in `~/.ink-brain/memory` (folders 0700, files 0600). Screen history records only the front app and window title, skips idle time and password managers, and is deleted after `memory.keepDays`.
 - The model is told to treat screen content, audio and web pages as untrusted data and not to read out secrets it can see. Remembered text reaches it labelled as data, never as instructions.
-- Web pages are read only from sites you allowed, in a hidden, signed-out browser window with its own in-memory profile. Every navigation must stay on an allowed site.
+- Web pages are read in a hidden, signed-out browser window with its own in-memory profile, which loads no images or media and refuses downloads and permissions. Set `web` to `ask` to approve each new site; every navigation then stays on sites you allowed.
 - Control of your Mac needs your approval of the listed steps, and stops when you press Esc, press the hotkey or move the mouse.
 - Panels run model-written code in sandboxed frames with no network access, and the overlay blocks web requests.
 - Linked sessions connect over `~/.ink-brain/bridge.sock` (mode 0600) and only see your screen after you allow them.
