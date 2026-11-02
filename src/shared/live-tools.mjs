@@ -235,7 +235,7 @@ const SCENE_OBJECT = {
         material: { type: "string", enum: MATERIALS, description: "Surface finish; color still applies. paint is glossy painted metal (cars, appliances), chrome is polished metal, pcb is a circuit board." },
         glow: { type: "boolean" },
         wireframe: { type: "boolean" },
-        label: { type: "string", description: "A tag that floats above the object and follows it." },
+        label: { type: "string", description: "A tag on the object. Once steps play it opens while a step acts on the object and otherwise rests as a dot the user can hover." },
         pivot: {
             ...vec3,
             description:

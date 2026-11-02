@@ -9,7 +9,8 @@ import { arrowFor, baked, baseOf, clamp01, geometryFor, isFlat, isPoint, num, pe
 const PALETTE = ["#a371f7", "#58a6ff", "#3fb950", "#f2cc60", "#ff7b72", "#79c0ff", "#d2a8ff", "#ffa657"];
 const DURATION = { highlight: 1.4, camera: 1.3 };
 const DEG = Math.PI / 180;
-const LABEL_PX = 24;
+// Label pill and closed-label dot heights in CSS pixels.
+const [LABEL_PX, DOT_PX] = [18, 8];
 // Surface finishes; physical ones need MeshPhysicalMaterial for clearcoat or transmission.
 const FINISHES = {
     metal: { metalness: 0.9, roughness: 0.25, color: "#c9d1d9" },
@@ -86,6 +87,21 @@ const isShown = (obj) => {
     return true;
 };
 
+// The marker a closed label shrinks to: a light dot in a dark ring.
+function dotTexture() {
+    const canvas = Object.assign(document.createElement("canvas"), { width: 32, height: 32 });
+    const ctx = canvas.getContext("2d");
+    for (const [r, fill] of [[15, "rgba(13, 17, 23, 0.85)"], [9, "#e6edf3"]]) {
+        ctx.fillStyle = fill;
+        ctx.beginPath();
+        ctx.arc(16, 16, r, 0, Math.PI * 2);
+        ctx.fill();
+    }
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    return texture;
+}
+
 // spec: { view, camera, objects, steps, autoplay, stepSeconds, loop }; returns { step(index), dispose() }.
 export async function renderScene(spec, { root, makeLabel, inPlace = false }) {
     const size = () => [root.clientWidth || innerWidth, Math.max(1, root.clientHeight || innerHeight)];
@@ -124,10 +140,32 @@ export async function renderScene(spec, { root, makeLabel, inPlace = false }) {
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.enableRotate = !flat;
-    controls.addEventListener("start", () => (controls.autoRotate = false));
+
+    // Labels open for what the current step is about (focus; null means all), the part under the pointer, and close while dragging.
+    const labels = [];
+    const marker = dotTexture();
+    let focus = null;
+    let hovered = null;
+    let dragging = false;
+    let aimed = false;
+    const pointer = new THREE.Vector2();
+    const ray = new THREE.Raycaster();
+    controls.addEventListener("start", () => {
+        controls.autoRotate = false;
+        dragging = true;
+    });
+    controls.addEventListener("end", () => (dragging = false));
+    renderer.domElement.addEventListener("pointermove", (event) => {
+        const r = renderer.domElement.getBoundingClientRect();
+        pointer.set(((event.clientX - r.left) / r.width) * 2 - 1, 1 - ((event.clientY - r.top) / r.height) * 2);
+        aimed = true;
+    });
+    renderer.domElement.addEventListener("pointerleave", () => {
+        aimed = false;
+        hovered = null;
+    });
 
     const items = new Map();
-    const labels = [];
     const flows = new Map();
     const tweens = [];
     const defs = Array.isArray(spec.objects) ? spec.objects : [];
@@ -322,15 +360,21 @@ export async function renderScene(spec, { root, makeLabel, inPlace = false }) {
     function attachLabel(item, text) {
         const old = labels.findIndex((l) => l.item === item);
         if (old >= 0) {
-            scene.remove(labels[old].sprite);
-            labels[old].sprite.material.map?.dispose();
+            const { sprite, dot } = labels[old];
+            scene.remove(sprite, dot);
+            sprite.material.map?.dispose();
             labels.splice(old, 1);
         }
         if (!String(text ?? "").trim()) return;
         const sprite = makeLabel(THREE, String(text).slice(0, 60), null, { size: 1 });
-        sprite.material.sizeAttenuation = false;
-        scene.add(sprite);
-        labels.push({ item, sprite });
+        const dot = new THREE.Sprite(new THREE.SpriteMaterial({ map: marker, transparent: true, depthTest: false }));
+        for (const s of [sprite, dot]) {
+            s.material.sizeAttenuation = false;
+            s.userData.label = item;
+        }
+        dot.renderOrder = 9;
+        scene.add(sprite, dot);
+        labels.push({ item, sprite, dot, open: 0, lift: 0, shift: 0, fade: 1 });
     }
 
     // Carves each object's cutters (openings, arches, cutaways) out of it; the cutters are not drawn.
@@ -649,10 +693,27 @@ export async function renderScene(spec, { root, makeLabel, inPlace = false }) {
         else if (a.do === "explode") explode(item, Math.max(0, num(a.value, 1.6)), duration, delay);
     }
 
+    // The labelled items a step is about: each object it acts on, or the group holding it.
+    const focusOf = (actions) => {
+        const labelled = (item) => labels.some((l) => l.item === item);
+        const found = new Set();
+        for (const a of actions) {
+            if (!a || a.do === "hide") continue;
+            for (const id of [a.target, a.from, a.to].filter((v) => typeof v === "string")) {
+                let item = items.get(id.split("#")[0]);
+                for (let hops = 0; item && !labelled(item) && hops < 8; hops++) item = items.get(item.def.parent);
+                if (item && labelled(item)) found.add(item);
+            }
+        }
+        return found;
+    };
+
     function step(index) {
         if (!Number.isInteger(index) || index <= played || index >= steps.length) return;
         for (let i = played + 1; i <= index; i++) for (const a of Array.isArray(steps[i]) ? steps[i] : []) act(a ?? {}, i < index);
         played = index;
+        const found = focusOf(Array.isArray(steps[index]) ? steps[index] : []);
+        if (found.size) focus = found;
     }
 
     function reset() {
@@ -678,6 +739,7 @@ export async function renderScene(spec, { root, makeLabel, inPlace = false }) {
         camera.position.copy(home.position);
         controls.target.copy(home.target);
         played = -1;
+        focus = null;
     }
 
     // Standalone scenes play their steps on a timer; explanations drive the steps instead.
@@ -696,32 +758,61 @@ export async function renderScene(spec, { root, makeLabel, inPlace = false }) {
         timer = setTimeout(tick, 700);
     }
 
-    // Nudges labels that would overlap on screen apart vertically, easing so they do not jitter.
-    const separate = () => {
+    // The label under the pointer: its dot, its open pill, or any part of its object.
+    const pick = () => {
+        aimed = false;
+        hovered = null;
+        const owners = new Map(labels.map((l) => [l.item.obj, l.item]));
+        const targets = labels.filter((l) => l.dot.visible).flatMap((l) => [l.dot, l.item.obj, ...(l.sprite.visible ? [l.sprite] : [])]);
+        if (dragging || !targets.length) return;
+        ray.setFromCamera(pointer, camera);
+        let node = ray.intersectObjects(targets, true)[0]?.object;
+        while (node && !node.userData.label && !owners.has(node)) node = node.parent;
+        hovered = node?.userData.label ?? owners.get(node) ?? null;
+    };
+
+    // Opens the labels that matter and closes the rest to dots; clashing focus labels lift clear, and open ones stay in view.
+    const declutter = (dt) => {
         camera.updateMatrixWorld();
         const [w, h] = size();
-        const shown = labels.filter((l) => l.sprite.visible).map((l) => {
-            const p = l.sprite.position.clone().project(camera);
-            const perPixel = (2 * camera.position.distanceTo(l.sprite.position) * Math.tan((camera.fov * DEG) / 2)) / h;
-            return { l, x: (p.x + 1) * (w / 2), y: (1 - p.y) * (h / 2), w: LABEL_PX * (l.sprite.scale.x / l.sprite.scale.y), h: LABEL_PX, perPixel };
-        });
-        shown.sort((a, b) => a.y - b.y);
+        const tan = Math.tan((camera.fov * DEG) / 2);
+        const up = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion);
+        const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
+        const fit = (y) => Math.min(Math.max(y, LABEL_PX / 2 + 4), h - inset - LABEL_PX / 2 - 4);
+        const rank = (l) => (l.item === hovered ? 0 : focus?.has(l.item) ? 1 : 2);
+        const shown = labels.filter((l) => l.dot.visible).sort((a, b) => rank(a) - rank(b));
         const placed = [];
-        for (const s of shown) {
-            let y = s.y;
-            for (const p of placed) if (Math.abs(s.x - p.x) < (s.w + p.w) / 2 && Math.abs(y - p.y) < (s.h + p.h) / 2 + 2) y = p.y + (s.h + p.h) / 2 + 2;
-            placed.push({ ...s, y });
-            const lift = (s.y - y) * s.perPixel;
-            if (!Number.isFinite(lift)) continue;
-            const nudge = Number.isFinite(s.l.nudge) ? s.l.nudge : 0;
-            s.l.nudge = nudge + (lift - nudge) * 0.25;
-            s.l.sprite.position.addScaledVector(camera.up, s.l.nudge);
+        for (const l of shown) {
+            const p = l.dot.position.clone().project(camera);
+            const perPixel = (2 * camera.position.distanceTo(l.dot.position) * tan) / h;
+            const width = LABEL_PX * (l.sprite.scale.x / l.sprite.scale.y);
+            const [ax, ay] = [(p.x + 1) * (w / 2), (1 - p.y) * (h / 2) - LABEL_PX / 2 - DOT_PX];
+            const x = Math.min(Math.max(ax, width / 2 + 4), w - width / 2 - 4);
+            // An open label keeps its place on a near miss, and a closed one waits for clear room, so neither flickers.
+            const pad = l.open > 0.5 ? -2 : 4;
+            const clash = (y) => placed.find((q) => Math.abs(x - q.x) < (width + q.width) / 2 + pad && Math.abs(y - q.y) < LABEL_PX + pad);
+            let y = fit(ay);
+            let open = !dragging && (!focus || rank(l) < 2);
+            if (open && rank(l) < 2) for (let q = clash(y), n = 0; q && n < 8; q = clash(y), n++) y = fit(q.y - LABEL_PX - 3);
+            else if (open && clash(y)) open = false;
+            if (open) placed.push({ x, y, width });
+            const k = Math.min(1, dt * 10);
+            l.open += ((open ? 1 : 0) - l.open) * Math.min(1, dt * 14);
+            l.lift += (ay - y - l.lift) * k;
+            l.shift += (x - ax - l.shift) * k;
+            const tall = (2 * LABEL_PX * tan * (0.85 + 0.15 * l.open)) / h;
+            l.sprite.scale.set(tall * (l.sprite.material.map.image.width / l.sprite.material.map.image.height), tall, 1);
+            l.sprite.position
+                .copy(l.dot.position)
+                .addScaledVector(up, (LABEL_PX / 2 + DOT_PX + l.lift) * perPixel)
+                .addScaledVector(right, l.shift * perPixel);
+            l.sprite.material.opacity = l.fade * l.open;
+            l.sprite.visible = l.open > 0.02;
         }
     };
 
     let raf = 0;
     let last = now;
-    const at = new THREE.Vector3();
     const labelBox = new THREE.Box3();
     const loop = () => {
         raf = requestAnimationFrame(loop);
@@ -748,22 +839,25 @@ export async function renderScene(spec, { root, makeLabel, inPlace = false }) {
                 d.scale.setScalar(0.45 + 0.55 * Math.sin(Math.PI * u));
             });
         }
+        const dotTall = (2 * DOT_PX * Math.tan((camera.fov * DEG) / 2)) / size()[1];
         for (const l of labels) {
             const { obj } = l.item;
-            l.sprite.visible = isShown(obj);
-            if (!l.sprite.visible) continue;
-            // A label rides on top of its object wherever it moves, swings or grows.
+            l.dot.visible = isShown(obj);
+            if (!l.dot.visible) {
+                l.sprite.visible = false;
+                continue;
+            }
+            // A label's dot rides on top of its object wherever it moves, swings or grows.
             labelBox.setFromObject(obj);
-            if (labelBox.isEmpty()) obj.getWorldPosition(at);
-            else labelBox.getCenter(at).setY(labelBox.max.y);
-            l.sprite.position.copy(at);
-            const tall = (LABEL_PX / size()[1]) * 2 * Math.tan((camera.fov * DEG) / 2);
-            l.sprite.position.addScaledVector(camera.up, tall * camera.position.distanceTo(l.sprite.position) * 0.8);
-            l.sprite.scale.set(tall * (l.sprite.material.map.image.width / l.sprite.material.map.image.height), tall, 1);
+            if (labelBox.isEmpty()) obj.getWorldPosition(l.dot.position);
+            else labelBox.getCenter(l.dot.position).setY(labelBox.max.y);
+            l.dot.scale.set(dotTall, dotTall, 1);
             const m = materialsOf(obj)[0];
-            l.sprite.material.opacity = m ? Math.min(1, m.opacity / Math.max(0.05, m.userData.opacity)) : 1;
+            l.fade = m ? Math.min(1, m.opacity / Math.max(0.05, m.userData.opacity)) : 1;
+            l.dot.material.opacity = l.fade;
         }
-        separate();
+        if (aimed) pick();
+        declutter(dt);
         controls.update();
         renderer.render(scene, camera);
     };

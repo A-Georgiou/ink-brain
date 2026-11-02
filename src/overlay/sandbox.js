@@ -86,13 +86,13 @@ async function renderMermaid(source) {
     if (box?.width) report({ type: "size", width: box.width, height: box.height });
 }
 
-function makeLabel(THREE, text, position, { color = "#e6edf3", background = "rgba(13, 17, 23, 0.82)", size = 0.32 } = {}) {
+function makeLabel(THREE, text, position, { color = "#e6edf3", background = "rgba(13, 17, 23, 0.78)", size = 0.32 } = {}) {
     const font = "600 44px -apple-system, system-ui, sans-serif";
     const canvas = document.createElement("canvas");
     const ctx = canvas.getContext("2d");
     ctx.font = font;
-    canvas.width = Math.ceil(ctx.measureText(String(text)).width) + 36;
-    canvas.height = 70;
+    canvas.width = Math.ceil(ctx.measureText(String(text)).width) + 32;
+    canvas.height = 64;
     // Resizing the canvas resets its context, so the font is set again.
     ctx.font = font;
     ctx.fillStyle = background;
@@ -101,7 +101,7 @@ function makeLabel(THREE, text, position, { color = "#e6edf3", background = "rgb
     ctx.fill();
     ctx.fillStyle = color;
     ctx.textBaseline = "middle";
-    ctx.fillText(String(text), 18, canvas.height / 2 + 2);
+    ctx.fillText(String(text), 16, canvas.height / 2 + 2);
     const texture = new THREE.CanvasTexture(canvas);
     texture.colorSpace = THREE.SRGBColorSpace;
     const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false }));
