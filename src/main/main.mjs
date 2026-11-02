@@ -805,7 +805,7 @@ async function readWeb(args) {
         granted.push(site);
     }
     try {
-        return { text: describePage(await reader.read(url, { allowed: (target) => siteAllowed(target, [...granted, ...config.webSites]) })) };
+        return { text: describePage(await reader.read(url, { allowed: (target) => siteAllowed(target, [...granted, ...config.webSites]) }), { from: args.from }) };
     } catch (error) {
         return { text: `Could not read ${url}: ${error.message}. Answer from what is on screen.`, failed: true };
     }

@@ -6,7 +6,7 @@ import { test } from "node:test";
 import { Memory } from "../src/main/memory.mjs";
 import { buildTurnPrompt } from "../src/main/prompt.mjs";
 import { resolveAppPath } from "../src/main/routes.mjs";
-import { siteAllowed, siteOf } from "../src/main/reader.mjs";
+import { describePage, siteAllowed, siteOf } from "../src/main/reader.mjs";
 import { Surface } from "../src/main/surface.mjs";
 
 const geometry = { modelWidth: 1512, modelHeight: 982, scale: 1 };
@@ -44,6 +44,14 @@ test("Copilot only reads allowed sites over http(s)", () => {
     assert.equal(siteOf("https://www.bbc.co.uk/news"), "bbc.co.uk");
     for (const url of ["https://www.reddit.com/r/a/comments/1", "http://old.reddit.com/"]) assert.ok(siteAllowed(url, ["reddit.com"]), url);
     for (const url of ["https://notreddit.com/", "https://reddit.com.evil.io/", "file:///etc/passwd", "javascript:alert(1)", "reddit.com"]) assert.ok(!siteAllowed(url, ["reddit.com"]), url);
+});
+
+test("long pages are read in parts, each saying where the next one starts", () => {
+    const page = { title: "Guide", url: "https://example.com/guide", text: `${"a".repeat(12_000)}${"b".repeat(5_000)}` };
+    assert.match(describePage(page), /\[cut off: 5000 more characters; call live_read again with from 12000 to read on\]/);
+    const rest = describePage(page, { from: 12_000 });
+    assert.match(rest, /\[from character 12000\]\nb{5000}\n<\/page>/);
+    assert.doesNotMatch(rest, /cut off/);
 });
 
 function surfaceWith(overlayResult = null) {

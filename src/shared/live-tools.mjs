@@ -610,6 +610,7 @@ export const READ_TOOL = {
         type: "object",
         properties: {
             url: { type: "string", description: "Full http(s) address: from the address bar or a visible link, a search page, or a link returned by an earlier live_read." },
+            from: { type: "number", description: "Where to start on a long page: the character offset a cut-off read gave you." },
         },
         required: ["url"],
     },
