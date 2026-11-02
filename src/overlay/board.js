@@ -1,6 +1,6 @@
 // 3Blue1Brown-style boards: typeset maths, graphs and diagrams that animate in time with narration.
 import { compile } from "/shared/mathexpr.mjs";
-import { katexOptions, withValues } from "/shared/board.mjs";
+import { BOARD_MARGIN, clearSpot, katexOptions, withValues } from "/shared/board.mjs";
 
 // A 16 by 9 unit board of 100 px units, origin in the middle and y up: SVG shapes under KaTeX text.
 const [W, H, UNIT] = [1600, 900, 100];
@@ -10,6 +10,8 @@ const NAMED = { blue: "#58C4DD", teal: "#5CD0B3", green: "#83C167", yellow: "#FF
 const CYCLE = ["#58C4DD", "#FFE45E", "#83C167", "#FC6255", "#9A72AC", "#F0AC5F"];
 const TIME = { show: 1, hide: 0.6, move: 1, transform: 1.4, color: 0.6, highlight: 1, surround: 0.8, opacity: 0.6, set: 1.6, apply: 2, camera: 1.2 };
 const TEXT_TYPES = new Set(["tex", "text"]);
+// Written elements the layout keeps apart and on the board.
+const MOVABLE = new Set(["tex", "text", "box"]);
 const LEAF = /\b(frac-line|hide-tail|stretchy)\b/;
 const STYLE = `
 .board{position:absolute;inset:0;overflow:hidden}
@@ -115,7 +117,9 @@ function build(spec, world, katex) {
     let now = performance.now() / 1000;
     let played = -1;
     let made = 0;
+    let revealed = 0;
     let settle = 2;
+    let easing = false;
     let spots = [];
 
     const value = (v, x = 0) => {
@@ -146,7 +150,7 @@ function build(spec, world, katex) {
         return null;
     };
     const shift = (item) => {
-        const own = item.offset;
+        const own = [item.offset[0] + item.nudge[0], item.offset[1] + item.nudge[1]];
         const axes = item.map ? null : axesOf(item);
         return axes ? [own[0] + axes.offset[0], own[1] + axes.offset[1]] : own;
     };
@@ -211,8 +215,22 @@ function build(spec, world, katex) {
         node.style.fontSize = `${size * UNIT}px`;
         if (wrap) node.style.width = `${item.def.width * UNIT}px`;
         (tex ? setTex : setText)(node, source);
+        if (!wrap) fitWidth(item, node);
         item.nodes.push(node);
         return node;
+    };
+    // Text too wide for the board is set smaller so that it fits.
+    const fitWidth = (item, node) => {
+        const room = W - 2 * BOARD_MARGIN - (item.def.type === "box" ? 56 : 0);
+        if (node.offsetWidth > room) node.style.fontSize = `${parseFloat(node.style.fontSize) * Math.max(0.5, room / node.offsetWidth)}px`;
+    };
+    // A box is never smaller than its text, whatever size it was given.
+    const sizeBox = (item) => {
+        const [cx, cy] = atOf(item.def);
+        const w = Math.max(num(item.def.width, 0) * UNIT, item.node ? item.node.offsetWidth + 56 : 240);
+        const h = Math.max(num(item.def.height, 0) * UNIT, item.node ? item.node.offsetHeight + 40 : 110);
+        const attrs = { x: cx - w / 2, y: cy - h / 2, width: w, height: h, rx: Math.min(18, h / 4) };
+        for (const [key, v] of Object.entries(attrs)) item.rect.setAttribute(key, v);
     };
     // An item's function of x: its own, else the plot it is on, else its fn expression.
     const fnOf = (item) => item.fn ?? items.get(item.def.on)?.fn ?? ((x) => value(item.def.fn, x));
@@ -265,12 +283,9 @@ function build(spec, world, katex) {
             const content = item.def.tex ?? item.def.text;
             item.textColor = paint(item.def.text_color, "#ECECEC");
             if (typeof content === "string") item.node = textNode(item, content, typeof item.def.tex === "string", num(item.def.size, 0.36));
-            const [cx, cy] = atOf(item.def);
-            // A box is never narrower than its text, whatever size it was given.
-            const w = Math.max(num(item.def.width, 0) * UNIT, item.node ? item.node.offsetWidth + 56 : 240);
-            const h = Math.max(num(item.def.height, 0) * UNIT, item.node ? item.node.offsetHeight + 40 : 110);
             const fill = item.def.fill === false ? 0 : 0.14;
-            stroke(item, "rect", { x: cx - w / 2, y: cy - h / 2, width: w, height: h, rx: Math.min(18, h / 4), fill: "currentColor", "fill-opacity": fill, "data-fill": fill });
+            item.rect = stroke(item, "rect", { fill: "currentColor", "fill-opacity": fill, "data-fill": fill });
+            sizeBox(item);
         },
         circle(item) {
             const [cx, cy] = pointOf(item, item.def.at ?? [0, 0]);
@@ -468,7 +483,7 @@ function build(spec, world, katex) {
         },
     };
 
-    const itemOf = (def, color, width, opacity = 1) => ({ def, g: svgNode("g", { color }, svg), nodes: [], offset: [0, 0], pulse: 1, opacity, shown: false, color, width });
+    const itemOf = (def, color, width, opacity = 1) => ({ def, g: svgNode("g", { color }, svg), nodes: [], offset: [0, 0], nudge: [0, 0], push: [0, 0], pulse: 1, opacity, shown: false, color, width });
     const add = (def, index) => {
         const neutral = TEXT_TYPES.has(def.type) ? "#ECECEC" : ["axes", "line", "arrow", "brace"].includes(def.type) ? "#C9D1D9" : null;
         const color = paint(def.color, neutral ?? CYCLE[index % CYCLE.length]);
@@ -500,9 +515,39 @@ function build(spec, world, katex) {
         const hidden = item.shown ? "" : "hidden";
         Object.assign(item.g.style, { opacity: item.opacity, visibility: hidden });
         for (const node of item.nodes) {
+            const [nx, ny] = node.nudge ?? [0, 0];
             Object.assign(node.style, { opacity: item.opacity, visibility: node.dataset.held ? "hidden" : hidden });
-            node.style.transform = `translate(${ox}px, ${oy}px) ${node.dataset.anchor ?? "translate(-50%, -50%)"} scale(${p})`;
+            node.style.transform = `translate(${ox + nx}px, ${oy + ny}px) ${node.dataset.anchor ?? "translate(-50%, -50%)"} scale(${p})`;
         }
+    };
+
+    // Keeps written elements and labels apart: each steps aside from those written before it, and glides there.
+    const declutter = () => {
+        const entries = [];
+        for (const item of items.values()) {
+            if (!item.shown || item.leaving || item.opacity <= 0.05) continue;
+            if (MOVABLE.has(item.def.type)) entries.push({ item, holder: item, box: () => boxOf(item.def.id) });
+            else for (const node of Object.values(item.labels ?? {})) entries.push({ item, holder: node, box: () => rectOf([node]) });
+        }
+        const taken = [];
+        let moving = false;
+        for (const { item, holder, box: measure } of entries.sort((a, b) => a.item.order - b.item.order)) {
+            const box = measure();
+            if (!box || !Number.isFinite(box.x)) continue;
+            holder.nudge ??= [0, 0];
+            const home = { ...box, x: box.x - holder.nudge[0], y: box.y - holder.nudge[1], frame: item.def.type === "box" };
+            // A morphing equation keeps its place until its glyphs have landed.
+            if (!item.settle || !holder.push) holder.push = clearSpot(home, taken, W, H);
+            taken.push({ ...home, x: home.x + holder.push[0], y: home.y + holder.push[1] });
+            const k = holder.placed ? 0.2 : 1;
+            holder.placed = true;
+            const next = holder.nudge.map((v, i) => (Math.abs(holder.push[i] - v) < 0.5 ? holder.push[i] : v + (holder.push[i] - v) * k));
+            if (next[0] === holder.nudge[0] && next[1] === holder.nudge[1]) continue;
+            holder.nudge = next;
+            place(item);
+            moving ||= next[0] !== holder.push[0] || next[1] !== holder.push[1];
+        }
+        return moving;
     };
 
     // Writes an element in: strokes draw, fills fade up, glyphs and words appear in turn and dots pop.
@@ -510,6 +555,7 @@ function build(spec, world, katex) {
         if (item.shown && !item.leaving) return;
         item.leaving = false;
         item.shown = true;
+        item.order ??= ++revealed;
         item.opacity = num(item.def.opacity, 1);
         const lines = [...item.g.querySelectorAll("[pathLength]")];
         const fades = [...item.g.querySelectorAll(".fade, [data-fill]")];
@@ -541,6 +587,7 @@ function build(spec, world, katex) {
             if (!item.leaving) return;
             item.shown = false;
             item.leaving = false;
+            for (const holder of [item, ...Object.values(item.labels ?? {})]) holder.placed = false;
         });
     }
 
@@ -603,7 +650,7 @@ function build(spec, world, katex) {
         if (isPair(action.by)) to = [from[0] + value(action.by[0]) * UNIT, from[1] - value(action.by[1]) * UNIT];
         else {
             const box = boxOf(item.def.id);
-            const [cx, cy] = box ? centre(box) : [W / 2, H / 2];
+            const [cx, cy] = box ? centre({ ...box, x: box.x - item.nudge[0], y: box.y - item.nudge[1] }) : [W / 2, H / 2];
             const [tx, ty] = px([value(action.to[0]), value(action.to[1])]);
             to = [from[0] + tx - cx, from[1] + ty - cy];
         }
@@ -618,6 +665,7 @@ function build(spec, world, katex) {
         fresh.style.cssText = old.style.cssText;
         if (old.dataset.anchor !== undefined) fresh.dataset.anchor = old.dataset.anchor;
         setTex(fresh, source);
+        fitWidth(item, fresh);
         item.nodes.splice(item.nodes.indexOf(old), 1, fresh);
         item.node = fresh;
         if (!item.shown || (duration <= 0 && delay <= 0)) return old.remove();
@@ -683,13 +731,18 @@ function build(spec, world, katex) {
 
     function transform(item, action, duration, delay) {
         const to = String(action.to);
-        if (item.def.type === "tex" || (item.def.type === "box" && typeof item.def.tex === "string")) return morph(item, to, duration, delay);
+        if (item.def.type === "tex" || (item.def.type === "box" && typeof item.def.tex === "string")) {
+            morph(item, to, duration, delay);
+            if (item.rect) sizeBox(item);
+            return;
+        }
         if (item.node && ["text", "box"].includes(item.def.type)) {
             const old = item.node;
             item.node = textNode(item, to, false, num(item.def.size, item.def.type === "box" ? 0.36 : 0.42));
             item.node.style.cssText = old.style.cssText;
             if (old.dataset.anchor !== undefined) item.node.dataset.anchor = old.dataset.anchor;
             item.nodes.splice(item.nodes.indexOf(old), 1);
+            if (item.rect) sizeBox(item);
             if (!item.shown) return old.remove();
             const leaves = leavesOf(item.node);
             tween(duration, delay, (k) => {
@@ -813,7 +866,7 @@ function build(spec, world, katex) {
         },
         frame(t) {
             now = t;
-            const busy = tweens.length || flows.size || settle > 0;
+            const busy = tweens.length || flows.size || settle > 0 || easing;
             for (const tw of [...tweens]) {
                 if (now < tw.start) continue;
                 const k = Math.min(1, (now - tw.start) / tw.duration);
@@ -831,6 +884,7 @@ function build(spec, world, katex) {
                 refreshText(item);
                 place(item);
             }
+            easing = declutter();
             for (const item of items.values()) if (item.attached) item.draw?.();
             for (const f of flows.values()) {
                 const t = Math.max(0, now - f.start) * f.speed;

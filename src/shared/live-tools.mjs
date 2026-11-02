@@ -361,7 +361,9 @@ const BOARD_PROPERTIES = {
         minItems: 1,
         maxItems: 100,
         items: BOARD_ELEMENT,
-        description: "The board is 16 by 9 units with the origin in the middle and y up; keep everything within x -7.5 to 7.5 and y -4.2 to 4.2, and use the whole board, with the main idea in the middle.",
+        description:
+            "The board is 16 by 9 units with the origin in the middle and y up; keep everything within x -7.5 to 7.5 and y -4.2 to 4.2, and use the whole board, with the main idea in the middle. " +
+            "Text never covers earlier text or boxes (it steps aside instead), so give each line its own row.",
     },
     vars: { type: "object", additionalProperties: { type: "number" }, description: "Named numbers that fn, at, x, domain, bars and \\val can use; set animates them." },
 };

@@ -177,3 +177,40 @@ export function texSources(board, steps = []) {
     for (const action of steps.flat()) if (action?.do === "transform" && typeof action.to === "string" && targetsOf(action).some((t) => tex.has(t))) list.push([`transform of ${action.target}`, action.to]);
     return list;
 }
+
+// Board layout. Boxes are { x, y, w, h, frame } in board pixels, where frame marks a box element.
+export const BOARD_MARGIN = 10;
+const GAP = 14;
+const area = (r) => r.w * r.h;
+const overlap = (a, b) => Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)) * Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
+// Text inside a bigger box (a frame), or a box drawn around text, overlaps on purpose.
+const nested = (a, b) => {
+    const [big, small] = area(a) > area(b) ? [a, b] : [b, a];
+    return big.frame && area(big) > 1.5 * area(small) && overlap(a, b) > 0.85 * area(small);
+};
+// Elements that touch or overlap, unless nested, need separating.
+const hits = (a, b) => a.x < b.x + b.w + 4 && b.x < a.x + a.w + 4 && a.y < b.y + b.h + 4 && b.y < a.y + a.h + 4 && !nested(a, b);
+const fitsIn = (v, size, max) => size > max - 2 * BOARD_MARGIN || (v >= BOARD_MARGIN - 0.5 && v + size <= max - BOARD_MARGIN + 0.5);
+
+// The smallest move [dx, dy] that keeps box b on a width by height board and off the taken boxes; a move clears them by GAP.
+export function clearSpot(b, taken, width, height) {
+    const into = (v, size, max) => (size > max - 2 * BOARD_MARGIN ? BOARD_MARGIN - v : Math.min(Math.max(v, BOARD_MARGIN), max - BOARD_MARGIN - size) - v);
+    const at = ([dx, dy]) => ({ x: b.x + dx, y: b.y + dy, w: b.w, h: b.h, frame: b.frame });
+    const onBoard = (r) => fitsIn(r.x, r.w, width) && fitsIn(r.y, r.h, height);
+    let frontier = [[into(b.x, b.w, width), into(b.y, b.h, height)]];
+    const seen = new Set();
+    for (let depth = 0; depth < 4 && frontier.length; depth++) {
+        const next = [];
+        for (const d of frontier) {
+            const r = at(d);
+            const blockers = taken.filter((o) => hits(r, o));
+            if (!blockers.length) return d;
+            for (const o of blockers) next.push([d[0], o.y - GAP - b.h - b.y], [d[0], o.y + o.h + GAP - b.y], [o.x - GAP - b.w - b.x, d[1]], [o.x + o.w + GAP - b.x, d[1]]);
+        }
+        frontier = next
+            .filter((d) => onBoard(at(d)) && !seen.has(d.join()) && seen.add(d.join()))
+            .sort((p, q) => Math.hypot(...p) - Math.hypot(...q))
+            .slice(0, 16);
+    }
+    return [into(b.x, b.w, width), into(b.y, b.h, height)];
+}

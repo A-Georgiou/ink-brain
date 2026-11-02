@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { anchorAt, pageState, pageTitle } from "../src/shared/anchors.mjs";
-import { validateBoard } from "../src/shared/board.mjs";
+import { clearSpot, validateBoard } from "../src/shared/board.mjs";
 import { compile } from "../src/shared/mathexpr.mjs";
 import { validateScene } from "../src/shared/scene.mjs";
 import { bubbleSpot, cropAround, describeMarks, modelImageSize, overlapArea, shapeToOverlay, validateShape } from "../src/shared/geometry.mjs";
@@ -139,4 +139,11 @@ test("boards check their equations' parts, plots and variables", () => {
     assert.match(validateBoard(board, [[{ do: "color", target: "eq.rhs" }]]), /"eq" has no \\part\{rhs\}/);
     assert.match(validateBoard({ elements: [{ id: "f", type: "plot", fn: "x" }] }), /plot "f" needs on/);
     assert.match(validateBoard(board, [[{ do: "set", vars: { b: 2 } }]]), /set b: declare it in the board's vars/);
+});
+
+test("board text steps the shortest way off earlier text, back onto the board, and stays put inside a box", () => {
+    const eq = { x: 500, y: 300, w: 400, h: 80 };
+    assert.deepEqual(clearSpot({ x: 520, y: 330, w: 300, h: 60 }, [eq], 1600, 900), [0, 64]);
+    assert.deepEqual(clearSpot({ x: 1500, y: 400, w: 300, h: 60 }, [], 1600, 900), [-210, 0]);
+    assert.deepEqual(clearSpot({ x: 560, y: 320, w: 200, h: 40 }, [{ ...eq, frame: true }], 1600, 900), [0, 0]);
 });
