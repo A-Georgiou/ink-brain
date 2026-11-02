@@ -605,7 +605,7 @@ export const READ_TOOL = {
     description:
         "Read a web page in the background, as a signed-out browser shows it, without touching the user's screen. Returns its text and the links in it. " +
         "Use it whenever the answer depends on more than the screen shows: the article, paper or video behind a link or headline, the rest of a thread with its answers, or current facts such as versions, releases and news. " +
-        "You can also search a site for the thing the user pointed at and read the best result. The user approves each new site.",
+        "You can also search a site for the thing the user pointed at and read the best result.",
     parameters: {
         type: "object",
         properties: {

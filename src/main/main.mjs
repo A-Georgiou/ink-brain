@@ -799,13 +799,16 @@ async function readWeb(args) {
     const url = String(args.url ?? "").trim();
     const site = siteOf(url);
     if (!site) return { text: "live_read needs a full http or https address.", failed: true };
+    const asking = config.web === "ask";
     const granted = [];
-    if (!siteAllowed(url, config.webSites)) {
+    if (asking && !siteAllowed(url, config.webSites)) {
         if ((await askToRead(site, url)) === "deny") return { text: `The user did not allow reading ${site}. Answer from what is on screen.`, failed: true };
         granted.push(site);
     }
+    // Asking keeps every navigation on approved sites; otherwise a page may redirect anywhere on the web.
+    const allowed = asking ? (target) => siteAllowed(target, [...granted, ...config.webSites]) : (target) => Boolean(siteOf(target));
     try {
-        return { text: describePage(await reader.read(url, { allowed: (target) => siteAllowed(target, [...granted, ...config.webSites]) }), { from: args.from }) };
+        return { text: describePage(await reader.read(url, { allowed }), { from: args.from }) };
     } catch (error) {
         return { text: `Could not read ${url}: ${error.message}. Answer from what is on screen.`, failed: true };
     }
@@ -1179,7 +1182,8 @@ function updateTrayMenu() {
             {
                 label: "Let Ink Brain read web pages",
                 submenu: [
-                    { label: "Ask me for each new site", type: "radio", checked: config.web !== "off", click: () => setWebMode("ask") },
+                    { label: "Always", type: "radio", checked: config.web !== "ask" && config.web !== "off", click: () => setWebMode("on") },
+                    { label: "Ask me for each new site", type: "radio", checked: config.web === "ask", click: () => setWebMode("ask") },
                     { label: "Never", type: "radio", checked: config.web === "off", click: () => setWebMode("off") },
                     { type: "separator" },
                     { label: `Forget allowed sites (${config.webSites.length})`, enabled: config.webSites.length > 0, click: () => setWebSites([]) },

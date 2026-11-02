@@ -27,8 +27,8 @@ export const DEFAULTS = {
     followUpSeconds: 12,
     wakeWord: "ink brain",
     control: "ask",
-    // "ask" before reading each new site, or "off"; sites allowed with "Always allow" are kept in webSites.
-    web: "ask",
+    // "on" reads pages whenever needed, "ask" asks before each new site (those allowed always are kept in webSites), "off" never reads.
+    web: "on",
     webSites: [],
     imageGeneration: true,
     // What Ink Brain remembers between conversations, kept in MEMORY_DIR on this Mac.
