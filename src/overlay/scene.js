@@ -112,6 +112,8 @@ export async function renderScene(spec, { root, makeLabel, inPlace = false }) {
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     root.append(renderer.domElement);
+    // A soft studio backdrop, so dark parts stand out; a scene laid over the screen stays see-through.
+    if (!inPlace) root.style.background = "radial-gradient(ellipse at 50% 40%, #3a4352 0%, #1d222b 58%, #0d1117 100%)";
 
     const scene = new THREE.Scene();
     const pmrem = new THREE.PMREMGenerator(renderer);
@@ -486,12 +488,14 @@ export async function renderScene(spec, { root, makeLabel, inPlace = false }) {
     const all = new THREE.Box3();
     for (const item of items.values()) all.expandByObject(item.obj);
     for (const [, twin] of twins) all.expandByObject(twin);
-    // Per-mesh boxes, as a sparse model (a long shaft, angled parts) fills far less than its overall box.
-    const partBoxes = () => {
+    // Per-mesh boxes, as a sparse model (a long shaft, angled parts) fills far less than its overall box; shown keeps only visible parts.
+    const partBoxes = (shown = false) => {
         const boxes = [];
-        scene.traverse((node) => node.isMesh && boxes.push(new THREE.Box3().setFromObject(node)));
+        scene.traverse((node) => node.isMesh && (!shown || isShown(node)) && boxes.push(new THREE.Box3().setFromObject(node)));
         return boxes.filter((box) => !box.isEmpty());
     };
+    const corners = (b) => [b.min.x, b.max.x].flatMap((x) => [b.min.y, b.max.y].flatMap((y) => [b.min.z, b.max.z].map((z) => new THREE.Vector3(x, y, z))));
+    const union = (boxes) => boxes.reduce((box, part) => box.union(part), new THREE.Box3());
     const sphere = all.isEmpty() ? new THREE.Sphere(new THREE.Vector3(), 2) : all.getBoundingSphere(new THREE.Sphere());
     unit = Math.max(0.2, sphere.radius);
     const fitDistance = (radius) => (radius * 1.25) / Math.sin((camera.fov * DEG) / 2);
@@ -503,22 +507,28 @@ export async function renderScene(spec, { root, makeLabel, inPlace = false }) {
         const up = new THREE.Vector3().crossVectors(back, right);
         const tan = Math.tan((camera.fov * DEG) / 2);
         const tall = tan * (camera.view ? (size()[1] - inset) / size()[1] : 1);
+        // A frame that has not been laid out yet has no width; assume a typical panel rather than divide by zero.
+        const aspect = camera.aspect > 0.1 ? camera.aspect : 4 / 3;
         let distance = 0;
         for (const part of parts) {
-            for (const x of [part.min.x, part.max.x]) for (const y of [part.min.y, part.max.y]) for (const z of [part.min.z, part.max.z]) {
-                const p = new THREE.Vector3(x, y, z).sub(target);
+            for (const corner of corners(part)) {
+                const p = corner.sub(target);
                 const depth = p.dot(back);
-                distance = Math.max(distance, depth + (Math.abs(p.dot(right)) * margin) / (tan * camera.aspect), depth + (Math.abs(p.dot(up)) * margin) / tall);
+                distance = Math.max(distance, depth + (Math.abs(p.dot(right)) * margin) / (tan * aspect), depth + (Math.abs(p.dot(up)) * margin) / tall);
             }
         }
+        if (!Number.isFinite(distance) || distance <= 0) distance = fitDistance(sphere.radius);
         return { target, position: target.clone().addScaledVector(back, distance) };
     };
-    const home = all.isEmpty()
-        ? { target: new THREE.Vector3(), position: new THREE.Vector3(0, 0, 8) }
-        : frame(all, flat ? new THREE.Vector3(0, 0, 1) : new THREE.Vector3(0.55, 0.42, 0.85), inPlace ? 1 : 1.15, partBoxes());
-    if (isPoint(spec.camera?.position)) home.position = v3(spec.camera.position);
-    if (typeof spec.camera?.target === "string" && items.has(spec.camera.target)) home.target = centreOf(items.get(spec.camera.target).obj);
-    else if (isPoint(spec.camera?.target)) home.target = v3(spec.camera.target);
+    // The model's camera picks the side to look from; the opening view frames what is visible from there.
+    const named = typeof spec.camera?.target === "string" && items.has(spec.camera.target) ? centreOf(items.get(spec.camera.target).obj) : null;
+    const looksAt = named ?? (isPoint(spec.camera?.target) ? v3(spec.camera.target) : all.getCenter(new THREE.Vector3()));
+    const asked = isPoint(spec.camera?.position) ? v3(spec.camera.position).sub(looksAt) : null;
+    const side = asked?.lengthSq() > 1e-9 ? asked : flat ? new THREE.Vector3(0, 0, 1) : new THREE.Vector3(0.55, 0.42, 0.85);
+    for (const item of items.values()) if (item.def.hidden) item.obj.visible = false;
+    const opening = partBoxes(true);
+    const margin = inPlace ? 1 : 1.15;
+    const home = all.isEmpty() ? { target: new THREE.Vector3(), position: new THREE.Vector3(0, 0, 8) } : opening.length ? frame(union(opening), side, margin, opening) : frame(all, side, margin, partBoxes());
     const distance = home.position.distanceTo(home.target);
     camera.near = Math.max(0.01, distance / 300);
     camera.far = distance * 300;
@@ -528,10 +538,30 @@ export async function renderScene(spec, { root, makeLabel, inPlace = false }) {
     controls.autoRotate = !flat && !steps.length;
     controls.autoRotateSpeed = 0.8;
 
-    for (const item of items.values()) {
-        if (item.def.label) attachLabel(item, item.def.label);
-        if (item.def.hidden) item.obj.visible = false;
-    }
+    for (const item of items.values()) if (item.def.label) attachLabel(item, item.def.label);
+
+    // When a step acts on a part that is out of view, the camera eases back out to fit everything shown.
+    let refit = 0;
+    const keepInView = (actions) => {
+        const outside = (p) => {
+            const v = p.project(camera);
+            return Math.abs(v.x) > 1 || Math.abs(v.y) > 1;
+        };
+        const acted = actions.flatMap((a) => [a?.target, a?.from, a?.to]).filter((id) => typeof id === "string").map((id) => items.get(id.split("#")[0])?.obj);
+        const lost = (obj) => {
+            let out = false;
+            obj?.traverse((node) => (out ||= node.isMesh && isShown(node) && corners(new THREE.Box3().setFromObject(node)).some(outside)));
+            return out;
+        };
+        if (!acted.some(lost)) return;
+        const parts = partBoxes(true);
+        const to = frame(union(parts), camera.position.clone().sub(controls.target), margin, parts);
+        const [p0, t0] = [camera.position.clone(), controls.target.clone()];
+        tween(1.1, 0, (k) => {
+            camera.position.lerpVectors(p0, to.position, smooth(k));
+            controls.target.lerpVectors(t0, to.target, smooth(k));
+        });
+    };
 
     function show(item, duration, delay) {
         const { obj } = item;
@@ -621,7 +651,8 @@ export async function renderScene(spec, { root, makeLabel, inPlace = false }) {
         if (!position) {
             const radius = item ? radiusOf(item.obj) : unit / 2;
             const direction = camera.position.clone().sub(controls.target).normalize();
-            position = target.clone().addScaledVector(direction, fitDistance(Math.max(radius, unit * 0.15)) * num(a.value, 1));
+            // Zooming keeps some of the model around the part in view.
+            position = target.clone().addScaledVector(direction, fitDistance(Math.max(radius, unit * 0.3)) * num(a.value, 1));
         }
         const [p0, t0] = [camera.position.clone(), controls.target.clone()];
         controls.autoRotate = false;
@@ -712,8 +743,11 @@ export async function renderScene(spec, { root, makeLabel, inPlace = false }) {
         if (!Number.isInteger(index) || index <= played || index >= steps.length) return;
         for (let i = played + 1; i <= index; i++) for (const a of Array.isArray(steps[i]) ? steps[i] : []) act(a ?? {}, i < index);
         played = index;
-        const found = focusOf(Array.isArray(steps[index]) ? steps[index] : []);
+        const actions = Array.isArray(steps[index]) ? steps[index] : [];
+        const found = focusOf(actions);
         if (found.size) focus = found;
+        clearTimeout(refit);
+        if (!actions.some((a) => a?.do === "camera")) refit = setTimeout(() => keepInView(actions), 1400);
     }
 
     function reset() {
@@ -738,6 +772,7 @@ export async function renderScene(spec, { root, makeLabel, inPlace = false }) {
         }
         camera.position.copy(home.position);
         controls.target.copy(home.target);
+        clearTimeout(refit);
         played = -1;
         focus = null;
     }
@@ -873,6 +908,7 @@ export async function renderScene(spec, { root, makeLabel, inPlace = false }) {
         dispose() {
             cancelAnimationFrame(raf);
             clearTimeout(timer);
+            clearTimeout(refit);
             resize.disconnect();
             controls.dispose();
             environment.dispose();

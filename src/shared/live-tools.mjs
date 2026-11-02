@@ -267,7 +267,7 @@ const SCENE_PROPERTIES = {
         items: SCENE_OBJECT,
         description: "Use real dimensions (for example centimetres) so proportions are true; y is up, and the camera frames everything. A model of a real thing needs 20 to 50 objects: every part that makes it recognisable.",
     },
-    camera: { type: "object", properties: { position: vec3, target: { description: "Object id or [x, y, z]." } } },
+    camera: { type: "object", description: "The side the opening view looks from (position, looking at target); the view always frames the whole model.", properties: { position: vec3, target: { description: "Object id or [x, y, z]." } } },
 };
 
 const pair = (description) => ({ type: "array", minItems: 2, maxItems: 2, description });
