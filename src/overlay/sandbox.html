@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "app://live/vendor/three/three.module.js",
+                "three/addons/": "app://live/vendor/three/addons/",
+                "three-mesh-bvh": "app://live/vendor/three-mesh-bvh/index.module.js",
+                "three-bvh-csg": "app://live/vendor/three-bvh-csg/index.module.js"
+            }
+        }
+    </script>
+    <style>
+        :root {
+            color-scheme: dark;
+        }
+        html,
+        body {
+            margin: 0;
+            height: 100%;
+            overflow: hidden;
+            background: transparent;
+            color: #e6edf3;
+            font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+        }
+        #root {
+            position: absolute;
+            inset: 0;
+            overflow: auto;
+        }
+        #root.diagram {
+            display: flex;
+            padding: 16px;
+            overflow: hidden;
+        }
+        #root.diagram svg {
+            width: 100%;
+            height: 100%;
+            max-width: 100% !important;
+        }
+        canvas {
+            display: block;
+        }
+    </style>
+    <script type="module" src="app://live/overlay/sandbox.js"></script>
+</head>
+<body>
+    <div id="root"></div>
+</body>
+</html>
