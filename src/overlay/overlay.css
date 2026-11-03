@@ -601,6 +601,11 @@ body.pen #bubble {
     align-items: center;
     gap: 8px;
     padding: 9px 8px 4px 14px;
+    cursor: grab;
+}
+
+#bubble.dragging header {
+    cursor: grabbing;
 }
 
 .badge {

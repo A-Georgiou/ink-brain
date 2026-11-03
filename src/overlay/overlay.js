@@ -269,6 +269,19 @@ function createBubble() {
     let jump = true;
     let label = "";
     let labelSince = 0;
+    // Where the user dragged this answer, and where a tucked answer rests while it is closed.
+    let moved = null;
+    let rest = null;
+
+    const moveTo = ({ x, y }) => {
+        el.style.left = `${x}px`;
+        el.style.top = `${y}px`;
+    };
+    // The nearest spot to (x, y) where the card, at its current size, fits inside the window.
+    const onScreen = (x, y) => ({
+        x: Math.round(Math.max(8, Math.min(x, innerWidth - el.offsetWidth - 8))),
+        y: Math.round(Math.max(8, Math.min(y, innerHeight - el.offsetHeight - 8))),
+    });
 
     const hide = () => el.classList.add("hidden");
     const scheduleHide = (ms = 30_000) => {
@@ -290,11 +303,46 @@ function createBubble() {
         api.command("dismiss");
     });
     el.querySelector(".bubble-stop").addEventListener("click", () => api.command(active ? "cancelTurn" : "stopSpeaking"));
-    el.addEventListener("mouseenter", () => clearTimeout(hideTimer));
-    el.addEventListener("mouseleave", () => !active && scheduleHide(10_000));
+    el.addEventListener("mouseenter", () => {
+        clearTimeout(hideTimer);
+        // A tucked answer opens on hover, sliding into view when opening where it rests would run off the screen.
+        if (!el.classList.contains("tucked") || moved) return;
+        rest = { x: el.offsetLeft, y: el.offsetTop };
+        moveTo(onScreen(rest.x, rest.y));
+    });
+    el.addEventListener("mouseleave", () => {
+        if (!active) scheduleHide(10_000);
+        if (rest && !moved) moveTo(rest);
+        rest = null;
+    });
+
+    // Dragging the header moves the answer anywhere on screen, and it stays there until the next question.
+    const header = el.querySelector("header");
+    header.addEventListener("pointerdown", (event) => {
+        if (event.button !== 0 || event.target.closest("button")) return;
+        event.preventDefault();
+        const start = { x: event.clientX, y: event.clientY, left: el.offsetLeft, top: el.offsetTop };
+        header.setPointerCapture(event.pointerId);
+        el.classList.add("placing", "dragging");
+        body.classList.add("dragging");
+        const move = (e) => moveTo((moved = onScreen(start.left + e.clientX - start.x, start.top + e.clientY - start.y)));
+        const up = () => {
+            el.classList.remove("placing", "dragging");
+            body.classList.remove("dragging");
+            header.removeEventListener("pointermove", move);
+            header.removeEventListener("pointerup", up);
+            header.removeEventListener("pointercancel", up);
+        };
+        header.addEventListener("pointermove", move);
+        header.addEventListener("pointerup", up);
+        header.addEventListener("pointercancel", up);
+    });
 
     // Moves aside when something is drawn or opened under it, and never covers the user's marks.
     function place() {
+        // A dragged answer, or a tucked one open under the pointer, stays put and only keeps on screen as it grows.
+        if (moved) return moveTo(onScreen(moved.x, moved.y));
+        if (rest && el.matches(":hover")) return moveTo(onScreen(el.offsetLeft, el.offsetTop));
         // Once an explanation has ended, its subtitles linger a moment and the answer keeps clear of them.
         const caption = document.querySelector("#captions:not(.hidden)");
         const drawn = [...annotations.rects(), ...panels.rects(), checkCard.rect(), dockRect(), ...(caption && (!el.classList.contains("minimized") || caption.classList.contains("docked")) ? [caption.getBoundingClientRect()] : [])].filter(Boolean);
@@ -361,7 +409,7 @@ function createBubble() {
             return active;
         },
         start(turn) {
-            [turnId, active, text, anchor, slot] = [turn.id, true, "", turn.anchor, null];
+            [turnId, active, text, anchor, slot, moved, rest] = [turn.id, true, "", turn.anchor, null, null, null];
             question.textContent = turn.question ? `"${turn.question}"` : "";
             target.textContent = turn.target;
             showActivity("Looking at your screen");
@@ -383,7 +431,7 @@ function createBubble() {
             scheduleHide();
         },
         say(message) {
-            [turnId, active, text, anchor, slot] = [-1, false, message, null, null];
+            [turnId, active, text, anchor, slot, moved, rest] = [-1, false, message, null, null, null, null];
             question.textContent = "";
             target.textContent = "Copilot";
             showActivity("");
