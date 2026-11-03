@@ -83,8 +83,16 @@ export function loadResults(labels, { repeats = Infinity } = {}) {
         if (!/^[\w.-]+$/.test(label) || label.startsWith(".")) throw new Error(`invalid eval label: ${label}`);
         const file = path.join(here, "results", label, "summary.json");
         const results = JSON.parse(fs.readFileSync(file, "utf8")).results;
-        return results.filter((run) => (Number(run.id.match(/~(\d+)$/)?.[1] ?? 1) <= repeats) && Number.isFinite(run.score));
+        return results.filter((run) => Number(run.id.match(/~(\d+)$/)?.[1] ?? 1) <= repeats);
     });
+}
+
+export function sameCodeControl(runs, options) {
+    const first = runs.filter((run) => !/~\d+$/.test(run.id));
+    const second = runs.filter((run) => run.id.endsWith("~2"));
+    const shared = new Set(first.map((run) => run.scenario));
+    if (!second.some((run) => shared.has(run.scenario))) return null;
+    return compareRuns(second, first, options);
 }
 
 function printComparison(name, a, b, options) {
@@ -105,7 +113,10 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     const metric = option("--metric", "score");
     const options = { metric };
     const matched = printComparison(`${args[0]} vs ${args[2]}`, left, right, options);
-    console.log(`  Unpaired scenario SE ${fixed(matched.unpairedSE)}; judge disagreements ${[left, right].map((runs) => `${runs.filter((run) => judgeDisagreement(run).flagged).length}/${runs.length}`).join(" vs ")}`);
+    console.log(`  Unpaired scenario SE ${fixed(matched.unpairedSE)}; judge disagreements ${[left, right].map((runs) => {
+        const judged = runs.filter((run) => run.judges?.length);
+        return `${judged.filter((run) => judgeDisagreement(run).flagged).length}/${judged.length}`;
+    }).join(" vs ")}`);
     if (metric === "score") {
         for (const category of new Set(matched.perScenario.map((row) => row.category))) {
             const [a, b] = [left, right].map((runs) => runs.filter((run) => run.category === category));
@@ -114,5 +125,14 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
         }
     }
     for (const { id, delta, runs } of matched.perScenario) console.log(`  ${id.padEnd(22)} ${signed(delta)} (${runs.join("/")} runs)`);
+    let controls = 0;
+    for (const label of new Set([args[0], args[2]].flatMap((group) => group.split("+")))) {
+        const control = sameCodeControl(loadResults(label), options);
+        if (control) {
+            controls++;
+            console.log(`  Null control ${label}, attempt 2 minus 1: ${signed(control.delta)}, 95% CI ${control.interval ? `[${control.interval.map(signed).join(", ")}]` : "-"}`);
+        }
+    }
+    if (controls) console.log("  Null controls use one attempt per side; their intervals cannot rule out model-wide run drift.");
     if (repeats === 1) console.log("  Only one attempt per scenario: the interval does not capture model-run variability.");
 }

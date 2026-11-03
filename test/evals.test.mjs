@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { judgeDisagreement, limitsFor, overall, passes } from "../evals/judge.mjs";
 import { measureLayout } from "../evals/layout.mjs";
-import { compareRuns } from "../evals/stats.mjs";
+import { compareRuns, sameCodeControl } from "../evals/stats.mjs";
 import { PairJudge, pairOutcome, pairPrompt, summarizePairs } from "../evals/versus.mjs";
 
 const run = (category, metrics = {}, tools = []) => ({
@@ -46,6 +46,22 @@ test("scenario pairing removes common difficulty without treating repeats as ind
     assert.deepEqual(result.interval, [1, 1]);
     assert.equal(result.pairedSE, 0);
     assert.ok(result.unpairedSE > 0);
+});
+
+test("same-code controls split attempts by scenario, excluding incomplete pairs", () => {
+    const scored = (scenario, attempt, score) => ({ scenario, category: "3d", id: attempt > 1 ? `${scenario}~${attempt}` : scenario, score });
+    const runs = [scored("easy", 1, 4), scored("hard", 1, 2), scored("missing", 1, 2), scored("hard", 2, 3), scored("easy", 2, 5), scored("other", 2, 4)];
+    const control = sameCodeControl(runs, { bootstrap: 200 });
+    assert.equal(control.scenarios, 2);
+    assert.equal(control.delta, 1);
+    assert.deepEqual(control.interval, [1, 1]);
+});
+
+test("paired stats can compare unjudged deterministic metrics", () => {
+    const time = (scenario, firstVisual) => ({ scenario, category: "3d", metrics: { firstVisual } });
+    const result = compareRuns([time("a", 500), time("b", 700)], [time("a", 600), time("b", 800)], { metric: "metrics.firstVisual", bootstrap: 100 });
+    assert.equal(result.delta, -100);
+    assert.deepEqual(result.interval, [-100, -100]);
 });
 
 test("judge disagreement reports large gaps even when the core caps the final score", () => {
