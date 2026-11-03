@@ -430,25 +430,37 @@ function build(spec, world, katex) {
                 desired = ([0.42, -0.42, 0.88, -0.88, 1.3, -1.3][idx] ?? 0.5) * sign * dirSign;
             }
         }
+        const isNode = (other) => other.def.type === "box" || (other.def.type === "circle" && Boolean(other.node));
         const terminals = [from, to].filter((end) => typeof end === "string").map((end) => end.split(".")[0]);
         const blockers = routing
             ? [...items.values()].flatMap((other) => {
                   if (other === item || !other.shown || other.leaving || other.opacity <= 0.15 || terminals.includes(other.def.id)) return [];
-                  const box = ["box", "circle"].includes(other.def.type)
+                  const box = isNode(other)
                       ? boxOf(other.def.id)
                       : other.order < item.order && other.labels?.label
                         ? rectOf([other.labels.label])
                         : null;
-                  return box ? [{ ...box, x: box.x - ox, y: box.y - oy, node: ["box", "circle"].includes(other.def.type) }] : [];
+                  return box ? [{ ...box, x: box.x - ox, y: box.y - oy, node: isNode(other) }] : [];
               })
             : [];
-        if (routing && (isPair(from) || isPair(to))) {
+        if (routing && !Number.isFinite(item.def.bend)) {
             const near = (r, p) => p[0] >= r.x - 12 && p[0] <= r.x + r.w + 12 && p[1] >= r.y - 12 && p[1] <= r.y + r.h + 12;
-            const [sa, sb] = [blockers.find((r) => r.node && near(r, a)), blockers.find((r) => r.node && near(r, b))];
-            if (sa && sb && sa !== sb && blockers.some((r) => r.node && r !== sa && r !== sb && Math.min(a[1], b[1]) < r.y + r.h && Math.max(a[1], b[1]) > r.y && a[0] >= r.x && a[0] <= r.x + r.w)) {
-                a = [Math.min(sa.x, sb.x) - 10, sa.y + sa.h / 2];
-                b = [Math.min(sa.x, sb.x) - 10, sb.y + sb.h / 2];
-                desired = -0.35;
+            const endBox = (end, p) => {
+                if (typeof end === "string") {
+                    const r = boxOf(end);
+                    return r && { ...r, x: r.x - ox, y: r.y - oy };
+                }
+                return blockers.find((r) => r.node && near(r, p));
+            };
+            const [sa, sb] = [endBox(from, a), endBox(to, b)];
+            const mid = sa && sb && sa !== sb ? blockers.filter((r) => r.node && r !== sa && r !== sb && Math.min(a[1], b[1]) < r.y + r.h && Math.max(a[1], b[1]) > r.y && Math.max(a[0], b[0]) >= r.x - 8 && Math.min(a[0], b[0]) <= r.x + r.w + 8) : [];
+            if (mid.length) {
+                const leftX = Math.min(sa.x, sb.x, ...mid.map((r) => r.x));
+                a = [sa.x - 10, sa.y + sa.h / 2];
+                b = [sb.x - 10, sb.y + sb.h / 2];
+                const spanY = Math.max(120, Math.abs(b[1] - a[1]));
+                const needed = Math.max(0.42, ((0.5 * (a[0] + b[0]) - (leftX - 42)) * 4) / spanY);
+                desired = (b[1] >= a[1] ? 1 : -1) * Math.min(1.1, needed);
             }
         }
         const length2 = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
@@ -465,7 +477,17 @@ function build(spec, world, katex) {
         const end = [b[0] - dir[0] * tip * 0.75, b[1] - dir[1] * tip * 0.75];
         item.path.setAttribute("d", bend ? `M${a.join(",")}Q${control.join(",")} ${end.join(",")}` : `M${a.join(",")}L${end.join(",")}`);
         if (tipped) arrowTip(item, b, dir, tip);
-        if (graph) {
+        const crossedAxis =
+            graph &&
+            isPair(from) &&
+            isPair(to) &&
+            [...items.values()].some((other) => {
+                if (other === item || !other.shown || other.leaving || other.def.on || !["line", "arrow"].includes(other.def.type) || !isPair(other.def.from) || !isPair(other.def.to)) return false;
+                const [oa, ob] = [pointOf(other, other.def.from), pointOf(other, other.def.to)];
+                const od = unit([ob[0] - oa[0], ob[1] - oa[1]]);
+                return Math.abs(dir[0] * od[0] + dir[1] * od[1]) < 0.25 && Math.hypot((oa[0] + ob[0]) / 2 - (a[0] + b[0]) / 2, (oa[1] + ob[1]) / 2 - (a[1] + b[1]) / 2) < length2 * 0.35;
+            });
+        if (graph && !crossedAxis) {
             const side = linkLabelSide(normal2, bend, item.sequence);
             const node = item.labels?.label;
             const gap = linkLabelGap(normal2, node?.offsetWidth ?? 0, node?.offsetHeight ?? num(item.def.size, 0.45) * UNIT);
@@ -473,30 +495,34 @@ function build(spec, world, katex) {
             if (node?.offsetWidth && node.offsetHeight) {
                 const labelObstacles = [...items.values()].flatMap((other) => {
                     if (other === item || !other.shown || other.leaving || other.opacity <= 0.15) return [];
-                    if (["box", "circle"].includes(other.def.type)) {
+                    if (isNode(other)) {
                         const box = boxOf(other.def.id);
                         return box ? [{ ...box, x: box.x - ox, y: box.y - oy, node: true }] : [];
                     }
                     if ((other.order ?? 0) < (item.order ?? Infinity)) {
                         const box = TEXT_TYPES.has(other.def.type) ? boxOf(other.def.id) : other.labels?.label ? rectOf([other.labels.label]) : null;
-                        return box ? [{ ...box, x: box.x - ox, y: box.y - oy, node: false }] : [];
+                        return box ? [{ ...box, x: Math.round(box.x - ox), y: Math.round(box.y - oy), w: Math.round(box.w), h: Math.round(box.h), node: false }] : [];
                     }
                     return [];
                 });
                 const paths = [...items.values()]
                     .filter((other) => other !== item && other.shown && !other.leaving && other.opacity > 0.15 && other.path && ["line", "arrow"].includes(other.def.type))
-                    .map((other) => linkPoints(other).map(([x, y]) => [x - ox, y - oy]));
-                const options = { a, b, control, width: node.offsetWidth, height: node.offsetHeight, side, obstacles: labelObstacles, paths };
+                    .map((other) => linkPoints(other).map(([x, y]) => [Math.round(x - ox), Math.round(y - oy)]));
+                const options = { a: a.map(Math.round), b: b.map(Math.round), control: control.map(Math.round), width: node.offsetWidth, height: node.offsetHeight, side, obstacles: labelObstacles, paths };
                 const labelKey = JSON.stringify(options);
                 if (labelKey !== item.labelKey) {
                     item.labelKey = labelKey;
                     item.labelSpot = placeLinkLabel(options);
-                    node.nudge = [0, 0];
-                    node.placed = false;
                 }
                 spot = item.labelSpot;
             }
             label(item, "label", item.def.label, spot);
+            return;
+        }
+        if (crossedAxis) {
+            const tipSpot = Math.abs(dir[0]) > Math.abs(dir[1]) ? [b[0] - dir[0] * 28, b[1] - 32] : [b[0] + 22, b[1] - dir[1] * 20];
+            const tipAnchor = Math.abs(dir[0]) > Math.abs(dir[1]) ? "translate(-50%, -50%)" : "translate(0, -50%)";
+            label(item, "label", item.def.label, tipSpot, tipAnchor);
             return;
         }
         const sharedMid = item.def.on && [...items.values()].some((other) => {
@@ -513,7 +539,8 @@ function build(spec, world, katex) {
         const anchor = isPair(vecEnd) && item.def.type === "vector" ? "translate(-50%, -50%)" : out[0] > 0.45 ? "translate(0, -50%)" : out[0] < -0.45 ? "translate(-100%, -50%)" : "translate(-50%, -50%)";
         label(item, "label", item.def.label, isPair(vecEnd) && item.def.type === "vector" ? vecSpot : spot, anchor);
         if (item.labels?.label) {
-            if (Math.hypot(cb[0] - ca[0], cb[1] - ca[1]) < 6) item.labels.label.dataset.held = "1";
+            const dynamicSeg = item.def.on && ["line", "arrow"].includes(item.def.type) && [item.def.from, item.def.to].flat().some((v) => typeof v === "string");
+            if (Math.hypot(cb[0] - ca[0], cb[1] - ca[1]) < (dynamicSeg ? 18 : 6)) item.labels.label.dataset.held = "1";
             else delete item.labels.label.dataset.held;
         }
     };
@@ -537,10 +564,12 @@ function build(spec, world, katex) {
         circle(item) {
             const fill = item.def.fill ? 0.25 : 0;
             const content = item.def.tex ?? item.def.text;
+            const isNode = typeof content === "string" || Boolean(item.def.fill);
             item.textColor = paint(item.def.text_color, "#ECECEC");
             if (typeof content === "string") item.node = textNode(item, content, typeof item.def.tex === "string", num(item.def.size, 0.38));
-            if (item.def.on) item.ellipse = stroke(item, "ellipse", { fill: "currentColor", "fill-opacity": fill, "data-fill": fill });
-            else item.circle = stroke(item, "circle", { fill: "currentColor", "fill-opacity": fill, "data-fill": fill });
+            const fillAttr = isNode ? { "data-fill": fill } : {};
+            if (item.def.on) item.ellipse = stroke(item, "ellipse", { fill: "currentColor", "fill-opacity": fill, ...fillAttr });
+            else item.circle = stroke(item, "circle", { fill: "currentColor", "fill-opacity": fill, ...fillAttr });
             item.draw = () => sizeCircle(item);
             sizeCircle(item);
         },
@@ -664,7 +693,7 @@ function build(spec, world, katex) {
                 const crossY = x0 < 0 && x1 > 0;
                 numbers.forEach(([axisName, v], i) => {
                     const [x, y] = baseMap(axisName === "x" ? [v, ay] : [ax, v]);
-                    const [dx, dy, anchor] = axisName === "x" ? [crossX ? 10 : 0, 36, crossX ? "start" : "middle"] : [-14, crossY ? 24 : 10, "end"];
+                    const [dx, dy, anchor] = axisName === "x" ? [crossX ? 10 : 0, 42, crossX ? "start" : "middle"] : [-14, crossY ? 24 : 10, "end"];
                     Object.entries({ x: x + dx, y: y + dy, "text-anchor": anchor }).forEach(([key, val]) => texts[i].setAttribute(key, val));
                 });
                 const [xl, yl] = Array.isArray(d.labels) ? d.labels : [];
@@ -730,11 +759,36 @@ function build(spec, world, katex) {
         dot(item) {
             item.circle = solid(item, "circle", { r: num(item.def.r, 0.09) * UNIT });
             item.draw = () => {
-                const plot = items.get(item.def.on);
-                const xy = plot?.fn ? axesOf(item).map([value(item.def.x), plot.fn(value(item.def.x))]) : pointOf(item, item.def.at);
+                const parent = items.get(item.def.on);
+                const axes = axesOf(item);
+                const mx = parent?.fn ? value(item.def.x) : isPair(item.def.at) ? value(item.def.at[0]) : 0;
+                const xy = parent?.fn ? axes.map([mx, parent.fn(mx)]) : pointOf(item, item.def.at);
                 item.circle.setAttribute("cx", xy[0]);
                 item.circle.setAttribute("cy", xy[1]);
-                label(item, "label", item.def.label, [xy[0] + 18, xy[1] - 18], "translate(0, -100%)");
+                const plot = parent?.fn ? parent : axes && [...items.values()].find((o) => o.def.type === "plot" && axesOf(o) === axes && o.fn);
+                let spot = [xy[0] + 18, xy[1] - 18];
+                let anchor = "translate(0, -100%)";
+                if (axes && plot?.fn) {
+                    const dx = (axes.range.x1 - axes.range.x0) * 0.08;
+                    const [yL, yR] = [axes.map([mx - dx, plot.fn(mx - dx)])[1], axes.map([mx + dx, plot.fn(mx + dx)])[1]];
+                    if (yL < xy[1] - 4 && yR < xy[1] - 4) {
+                        spot = [xy[0], xy[1] + 24];
+                        anchor = "translate(-50%, 0)";
+                    } else if (yR < xy[1] - 6 && yL >= xy[1] - 2) {
+                        const shortLabel = String(item.def.label ?? "").length <= 5;
+                        spot = shortLabel ? [xy[0] - 18, xy[1] - 16] : [xy[0] + 18, xy[1] + 10];
+                        anchor = shortLabel ? "translate(-100%, -100%)" : "translate(0, 0)";
+                    }
+                }
+                label(item, "label", item.def.label, spot, anchor);
+                if (item.labels?.label) {
+                    const crowded = [...items.values()].some((other) => {
+                        if (other === item || !other.shown || other.leaving || other.def.type !== "dot" || !other.labels?.label || (other.order ?? 0) >= (item.order ?? Infinity)) return false;
+                        return Math.hypot(Number(other.circle.getAttribute("cx")) - xy[0], Number(other.circle.getAttribute("cy")) - xy[1]) < 42;
+                    });
+                    if (crowded) item.labels.label.dataset.held = "1";
+                    else delete item.labels.label.dataset.held;
+                }
             };
         },
         tangent(item) {
@@ -795,8 +849,9 @@ function build(spec, world, katex) {
         Object.assign(item.g.style, { opacity: item.opacity, visibility: hidden });
         for (const node of item.nodes) {
             const [nx, ny] = node.nudge ?? [0, 0];
+            const np = item.def.type === "dot" ? 1 : p;
             Object.assign(node.style, { opacity: item.opacity, visibility: node.dataset.held ? "hidden" : hidden });
-            node.style.transform = `translate(${ox + nx}px, ${oy + ny}px) ${node.dataset.anchor ?? "translate(-50%, -50%)"} scale(${p})`;
+            node.style.transform = `translate(${ox + nx}px, ${oy + ny}px) ${node.dataset.anchor ?? "translate(-50%, -50%)"} scale(${np})`;
         }
     };
 
@@ -817,18 +872,44 @@ function build(spec, world, katex) {
                     const b = t.getBBox();
                     if (b.width) taken.push({ x: b.x + ox - 2, y: b.y + oy - 2, w: b.width + 4, h: b.height + 4 });
                 }
-            } else if (!item.def.on && ["line", "arrow"].includes(item.def.type) && item.path) {
+                if (item.range && item.baseMap) {
+                    const { x0, x1, y0, y1 } = item.range;
+                    const [ax, ay] = [x0 <= 0 && x1 >= 0 ? 0 : x0, y0 <= 0 && y1 >= 0 ? 0 : y0];
+                    const [lx0, ly] = item.baseMap([x0, ay]);
+                    const [lx1] = item.baseMap([x1, ay]);
+                    const [vx, vy0] = item.baseMap([ax, y1]);
+                    const [, vy1] = item.baseMap([ax, y0]);
+                    edgeObstacles.push({
+                        owner: item.def.id,
+                        ends: [],
+                        boxes: [
+                            { x: Math.min(lx0, lx1) + ox, y: ly + oy - 4, w: Math.abs(lx1 - lx0), h: 8 },
+                            { x: vx + ox - 4, y: Math.min(vy0, vy1) + oy, w: 8, h: Math.abs(vy1 - vy0) },
+                        ],
+                    });
+                }
+            } else if (item.def.type === "circle" && !item.node && item.circle) {
+                const [ox, oy] = shift(item);
+                const [cx, cy, r] = ["cx", "cy", "r"].map((k) => Number(item.circle.getAttribute(k)));
+                if (r > 10) {
+                    const boxes = Array.from({ length: 24 }, (_, i) => {
+                        const a = (i / 24) * Math.PI * 2;
+                        return { x: cx + ox + Math.cos(a) * r - 5, y: cy + oy + Math.sin(a) * r - 5, w: 10, h: 10 };
+                    });
+                    edgeObstacles.push({ owner: item.def.id, ends: [], boxes });
+                }
+            } else if (["line", "arrow", "vector", "tangent", "plot"].includes(item.def.type) && item.path) {
                 const pts = linkPoints(item);
                 if (pts.length >= 2) {
                     const [p0, p1] = [pts[0], pts.at(-1)];
-                    if (Math.abs(p1[0] - p0[0]) < 8 || Math.abs(p1[1] - p0[1]) < 8) {
+                    if (item.def.type !== "plot" && (Math.abs(p1[0] - p0[0]) < 8 || Math.abs(p1[1] - p0[1]) < 8)) {
                         const [x0, x1] = [Math.min(p0[0], p1[0]), Math.max(p0[0], p1[0])];
                         const [y0, y1] = [Math.min(p0[1], p1[1]), Math.max(p0[1], p1[1])];
-                        edgeObstacles.push({ from: item.def.from, to: item.def.to, ends: [p0, p1], boxes: [{ x: x0 - 4, y: y0 - 4, w: x1 - x0 + 8, h: y1 - y0 + 8 }] });
+                        edgeObstacles.push({ owner: item.def.id, from: item.def.from, to: item.def.to, ends: [p0, p1], boxes: [{ x: x0 - 4, y: y0 - 4, w: x1 - x0 + 8, h: y1 - y0 + 8 }] });
                     } else {
-                        const step = Math.max(1, Math.floor(pts.length / 6));
+                        const step = Math.max(1, Math.floor(pts.length / (item.def.type === "plot" ? 18 : 6)));
                         const sampled = pts.filter((_, idx) => idx > 0 && idx < pts.length - 1 && idx % step === 0);
-                        edgeObstacles.push({ from: item.def.from, to: item.def.to, ends: [p0, p1], boxes: sampled.map(([x, y]) => ({ x: x - 5, y: y - 5, w: 10, h: 10 })) });
+                        edgeObstacles.push({ owner: item.def.id, from: item.def.from, to: item.def.to, ends: [p0, p1], boxes: sampled.map(([x, y]) => ({ x: x - 5, y: y - 5, w: 10, h: 10 })) });
                     }
                 }
             }
@@ -842,12 +923,19 @@ function build(spec, world, katex) {
             if (!box || !Number.isFinite(box.x)) continue;
             holder.nudge ??= [0, 0];
             const isFrame = holder === item && ["box", "circle"].includes(item.def.type);
-            const home = { ...box, id: holder === item ? item.def.id : undefined, x: box.x - holder.nudge[0], y: box.y - holder.nudge[1], frame: isFrame };
+            const rawHome = { ...box, id: holder === item ? item.def.id : undefined, x: box.x - holder.nudge[0], y: box.y - holder.nudge[1], frame: isFrame };
+            const pulsing = holder.placed && Math.abs(item.pulse - 1) > 1e-3;
+            const home = { ...rawHome, id: rawHome.id, frame: isFrame };
             const linked = isFrame ? connections.get(item.def.id) : null;
             const insideHome = ([px1, py1]) => px1 >= home.x - 6 && px1 <= home.x + home.w + 6 && py1 >= home.y - 6 && py1 <= home.y + home.h + 6;
-            const extra = isFrame || holder !== item ? [] : edgeObstacles.filter((e) => ![e.from, e.to].includes(item.def.id) && !e.ends.some(insideHome)).flatMap((e) => e.boxes);
-            // A morphing equation keeps its place until its glyphs have landed.
-            if (!item.settle || !holder.push) holder.push = linked?.size ? clearNodeSpot(home, taken, linked, W, H) : clearSpot(home, extra.length ? [...taken, ...extra] : taken, W, H);
+            const onAxesOrCircle = Boolean(item.def.on) || [...items.values()].some((o) => o.def.type === "circle" && !o.node && o.shown);
+            const checkEdges = !isFrame && ((holder === item && (!item.def.on || !["line", "arrow"].some((t) => kinds.has(t)) || onAxesOrCircle)) || item.def.type === "dot" || Boolean(item.def.on));
+            const extra = !checkEdges ? [] : edgeObstacles.filter((e) => e.owner !== item.def.id && ![e.from, e.to].includes(item.def.id) && (item.def.type === "dot" || Boolean(item.def.on) || !e.ends.some(insideHome))).flatMap((e) => e.boxes);
+            const allObstacles = extra.length ? [...taken, ...extra] : taken;
+            // A morphing or pulsing equation keeps its place until its animation has landed.
+            if ((!item.settle && !pulsing) || !holder.push) {
+                holder.push = linked?.size ? clearNodeSpot(home, taken, linked, W, H) : clearSpot(home, allObstacles, W, H);
+            }
             taken.push({ ...home, x: home.x + holder.push[0], y: home.y + holder.push[1] });
             const k = holder.placed ? 0.25 : 1;
             holder.placed = true;

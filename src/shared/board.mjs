@@ -257,7 +257,7 @@ export function clearSpot(b, taken, width, height) {
 export function clearNodeSpot(box, taken, linked, width, height) {
     const expanded = taken.map((other) =>
         linked.has(other.id) && !nested(box, other)
-            ? { ...other, x: other.x - 60, y: other.y - 60, w: other.w + 120, h: other.h + 120, frame: false }
+            ? { ...other, x: other.x - 84, y: other.y - 60, w: other.w + 168, h: other.h + 120, frame: false }
             : other,
     );
     const spot = clearSpot(box, expanded, width, height);
