@@ -872,36 +872,32 @@ export async function renderScene(spec, { root, makeLabel, inPlace = false }) {
         return list;
     };
 
-    // The spot on a labelled part nearest its middle that the camera can see, in the part's own frame so it rides along as the part moves.
-    const anchorOf = (l, blockers, tries) => {
+    // A spot on the labelled part the camera really sees: rays cast across its outline on screen that land on the part itself, taking the most central.
+    // It is kept in the part's own frame, so the dot rides along as the part moves.
+    const anchorOf = (l, blockers, grid) => {
         const { obj } = l.item;
         const box = new THREE.Box3().setFromObject(obj);
         if (box.isEmpty()) return null;
-        const centre = box.getCenter(new THREE.Vector3());
         l.bulk = box.getSize(new THREE.Vector3()).length();
-        const spots = [centre];
-        obj.traverse((node) => {
-            const pos = node.isMesh && isShown(node) && node.geometry?.attributes?.position;
-            if (!pos) return;
-            const stride = Math.max(1, Math.floor(pos.count / 12));
-            for (let i = 0; i < pos.count && spots.length < tries; i += stride) spots.push(new THREE.Vector3().fromBufferAttribute(pos, i).applyMatrix4(node.matrixWorld).lerp(centre, 0.08));
-        });
-        const middle = centre.clone().project(camera);
-        let [best, score] = [centre, Infinity];
-        for (const spot of spots) {
-            const toward = spot.clone().sub(camera.position);
-            const far = toward.length();
-            ray.set(camera.position, toward.divideScalar(far));
-            ray.far = far + unit * 0.01;
-            const hit = ray.intersectObjects(blockers, false)[0];
-            const mine = !hit || within(obj, hit.object);
-            const point = hit && mine ? hit.point : spot;
-            const p = point.clone().project(camera);
-            const cost = Math.hypot(p.x - middle.x, p.y - middle.y) + (mine ? 0 : 10);
-            if (cost < score) [best, score] = [point, cost];
+        const own = [];
+        obj.traverse((node) => node.isMesh && isShown(node) && own.push(node));
+        const seen = corners(box).map((c) => c.project(camera));
+        const [x0, x1] = [Math.max(-1, Math.min(...seen.map((p) => p.x))), Math.min(1, Math.max(...seen.map((p) => p.x)))];
+        const [y0, y1] = [Math.max(-1, Math.min(...seen.map((p) => p.y))), Math.min(1, Math.max(...seen.map((p) => p.y)))];
+        const hits = [];
+        ray.far = Infinity;
+        for (let i = 0; x1 > x0 && y1 > y0 && i < grid; i++) {
+            for (let j = 0; j < grid; j++) {
+                const at = new THREE.Vector2(x0 + ((i + 0.5) / grid) * (x1 - x0), y0 + ((j + 0.5) / grid) * (y1 - y0));
+                ray.setFromCamera(at, camera);
+                const hit = ray.intersectObjects([...blockers, ...own], false)[0];
+                if (hit && within(obj, hit.object)) hits.push({ point: hit.point, at });
+            }
         }
-        l.hidden = score >= 10;
-        return obj.worldToLocal(best.clone());
+        l.hidden = !hits.length;
+        if (!hits.length) return obj.worldToLocal(box.getCenter(new THREE.Vector3()));
+        const middle = hits.reduce((sum, h) => sum.add(h.at), new THREE.Vector2()).divideScalar(hits.length);
+        return obj.worldToLocal(hits.reduce((best, h) => (h.at.distanceTo(middle) < best.at.distanceTo(middle) ? h : best)).point.clone());
     };
 
     // How far from a point inside the rect, along a direction, until it leaves it.
@@ -925,7 +921,7 @@ export async function renderScene(spec, { root, makeLabel, inPlace = false }) {
         if (now >= refreshAt) {
             refreshAt = now + 0.15;
             const blockers = solids();
-            for (const l of labels) if (isShown(l.item.obj)) l.local = anchorOf(l, blockers, focus?.has(l.item) || l.item === hovered ? 40 : 12) ?? l.local;
+            for (const l of labels) if (isShown(l.item.obj)) l.local = anchorOf(l, blockers, focus?.has(l.item) || l.item === hovered ? 7 : 4) ?? l.local;
             const box = union(robust(partBoxes(true)));
             model = box.isEmpty() ? null : corners(box).map(toScreen).reduce((r, p) => ({ x0: Math.min(r.x0, p.x), y0: Math.min(r.y0, p.y), x1: Math.max(r.x1, p.x), y1: Math.max(r.y1, p.y) }), { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity });
         }
@@ -953,9 +949,10 @@ export async function renderScene(spec, { root, makeLabel, inPlace = false }) {
                 l.pill = null;
                 continue;
             }
-            let [dx, dy] = [a.x - cx, a.y - cy];
+            // Callouts lean sideways, where there is usually room beside the model, rather than over or under it.
+            let [dx, dy] = [(a.x - cx) * 2.5 || (a.x < w / 2 ? -1 : 1), a.y - cy];
             const len = Math.hypot(dx, dy);
-            [dx, dy] = len < 1 ? [0, -1] : [dx / len, dy / len];
+            [dx, dy] = [dx / len, dy / len];
             const out = Math.min(170, Math.max(26, (model ? edgeDistance(a, dx, dy, model) : 0) + 18));
             const clampX = (x) => Math.min(Math.max(x, 6), w - l.width - 6);
             const clampY = (y) => Math.min(Math.max(y, 6), bottom - PILL_PX);
