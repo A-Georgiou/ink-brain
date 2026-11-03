@@ -310,11 +310,12 @@ export async function renderScene(spec, { root, makeLabel, inPlace = false }) {
         return target?.userData.portDir ? target.userData.portDir.clone().transformDirection(target.matrixWorld) : new THREE.Vector3(0, 1, 0);
     }
 
-    // Lays a wire as an arcing cable between its ends; runs every frame so it follows moving parts.
+    // Lays a wire as an arcing cable between its ends, or a rod as a straight link between their middles; runs every frame so it follows moving parts.
     function layWire(item) {
         const { def, obj, wire } = item;
-        const a = endOf(def.from, endOf(def.to));
-        const b = endOf(def.to, a);
+        const middle = (end) => (isPoint(end) ? v3(end) : centreOf(host(items.get(end)) ?? new THREE.Object3D()));
+        const a = wire.rod ? middle(def.from) : endOf(def.from, endOf(def.to));
+        const b = wire.rod ? middle(def.to) : endOf(def.to, a);
         const key = [...a.toArray(), ...b.toArray()].map((v) => v.toFixed(3)).join();
         if (key === wire.key) return;
         wire.key = key;
@@ -322,14 +323,23 @@ export async function renderScene(spec, { root, makeLabel, inPlace = false }) {
         const lift = Math.min(unit, a.distanceTo(b) * 0.35) * num(def.sag, 1);
         const bend = flat && new THREE.Vector3(a.y - b.y, b.x - a.x, 0).normalize().multiplyScalar(lift * 0.6);
         const [outA, outB] = flat ? [bend, bend] : [leaving(def.from).multiplyScalar(lift), leaving(def.to).multiplyScalar(lift)];
-        wire.curve = new THREE.CubicBezierCurve3(a.clone().sub(mid), a.clone().add(outA).sub(mid), b.clone().add(outB).sub(mid), b.clone().sub(mid));
+        wire.curve = wire.rod ? new THREE.LineCurve3(a.clone().sub(mid), b.clone().sub(mid)) : new THREE.CubicBezierCurve3(a.clone().sub(mid), a.clone().add(outA).sub(mid), b.clone().add(outB).sub(mid), b.clone().sub(mid));
         obj.geometry.dispose();
+        const radius = num(def.radius, unit * (wire.rod ? 0.025 : 0.012));
         if (wire.ribbon) {
             const across = new THREE.Vector3().crossVectors(b.clone().sub(a), new THREE.Vector3(0, flat ? 0 : 1, flat ? 1 : 0));
             obj.geometry = ribbonGeometry(wire.curve, wire.ribbon, across.lengthSq() > 1e-9 ? across.normalize() : new THREE.Vector3(1, 0, 0));
-        } else obj.geometry = new THREE.TubeGeometry(wire.curve, 64, num(def.radius, unit * 0.012), 8, false);
+        } else obj.geometry = new THREE.TubeGeometry(wire.curve, wire.rod ? 1 : 64, radius, wire.rod ? 16 : 8, false);
         obj.geometry.setDrawRange(0, Math.ceil(obj.geometry.index.count * wire.drawn));
         obj.position.copy(mid);
+        if (wire.rod) {
+            // A rod's ends are ball joints on the parts it links.
+            wire.caps.forEach((cap, i) => {
+                cap.position.copy(i ? b : a).sub(mid);
+                cap.scale.setScalar(radius * 1.6);
+            });
+            return;
+        }
         // Plug ends sit along the direction the cable leaves, so a plug points into its socket.
         wire.caps.forEach((cap, i) => {
             const out = leaving(i ? def.to : def.from);
@@ -341,16 +351,17 @@ export async function renderScene(spec, { root, makeLabel, inPlace = false }) {
     function buildWire(def, index) {
         const color = colorOf(def.color, index);
         const opacity = clamp01(num(def.opacity, 1));
+        const rod = def.style === "rod";
         const ribbon = def.style === "ribbon" ? Math.max(0.001, num(def.width, unit * 0.08)) : 0;
-        const material = new THREE.MeshStandardMaterial({ color, roughness: 0.35, metalness: 0.05, emissive: color.clone(), emissiveIntensity: def.glow ? 0.55 : 0, transparent: true, opacity, side: ribbon ? THREE.DoubleSide : THREE.FrontSide });
+        const material = new THREE.MeshStandardMaterial({ color, roughness: 0.35, metalness: rod ? 0.75 : 0.05, emissive: color.clone(), emissiveIntensity: def.glow ? 0.55 : 0, transparent: true, opacity, side: ribbon ? THREE.DoubleSide : THREE.FrontSide });
         const obj = new THREE.Mesh(new THREE.BufferGeometry(), material);
         const r = num(def.radius, unit * 0.012);
-        const caps = flat || ribbon ? [] : [0, 1].map(() => new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial({ color: "#21262d", roughness: 0.5, transparent: true })));
+        const caps = flat || ribbon ? [] : [0, 1].map(() => new THREE.Mesh(rod ? new THREE.SphereGeometry(1, 16, 12) : new THREE.BoxGeometry(1, 1, 1), rod ? material : new THREE.MeshStandardMaterial({ color: "#21262d", roughness: 0.5, transparent: true })));
         for (const cap of caps) {
-            cap.scale.set(r * 4.5, r * 9, r * 4.5);
+            if (!rod) cap.scale.set(r * 4.5, r * 9, r * 4.5);
             obj.add(cap);
         }
-        const item = { ...record(def, obj), wire: { caps, ribbon, key: "", drawn: def.hidden ? 0 : 1, curve: null } };
+        const item = { ...record(def, obj), wire: { caps, ribbon, rod, key: "", drawn: def.hidden ? 0 : 1, curve: null } };
         scene.add(obj);
         layWire(item);
         item.home.position.copy(obj.position);
@@ -472,6 +483,92 @@ export async function renderScene(spec, { root, makeLabel, inPlace = false }) {
     for (const [index, def] of defs.entries()) if (def.type === "wire") wires.push(items.set(def.id, buildWire(def, index)).get(def.id));
     scene.updateMatrixWorld(true);
 
+    // Mechanisms turn one input (theta, in turns) into linked motion solved every frame, so joined parts never come apart.
+    const AXIS = { x: new THREE.Vector3(1, 0, 0), y: new THREE.Vector3(0, 1, 0), z: new THREE.Vector3(0, 0, 1) };
+    const mechanisms = new Map();
+    const placeAt = (obj, world) => obj.position.copy(obj.parent ? obj.parent.worldToLocal(world.clone()) : world);
+    for (const def of Array.isArray(spec.mechanisms) ? spec.mechanisms : []) {
+        const m = { def, theta: 0, speed: 0 };
+        if (def.type === "crank") {
+            const [crank, pin, slider] = [def.crank, def.pin, def.slider].map((id) => items.get(id));
+            if (!crank || !pin || !slider) continue;
+            const turn = AXIS[def.turn] ? def.turn : "z";
+            const p0 = centreOf(pin.obj);
+            const a0 = centreOf(slider.obj);
+            const rod = items.get(def.rod) ?? null;
+            Object.assign(m, { crank, pin, slider, rod, turn, p0, a0, t: 0, base: crank.obj.rotation[turn], u: AXIS[def.axis] ?? AXIS.y, length: p0.distanceTo(a0) });
+            Object.assign(m, { pivot: crank.obj.getWorldPosition(new THREE.Vector3()), spin: AXIS[turn].clone().transformDirection(crank.obj.matrixWorld), s0: slider.obj.getWorldPosition(new THREE.Vector3()), riding: within(crank.obj, pin.obj) });
+            if (!m.riding) m.pinStart = pin.obj.getWorldPosition(new THREE.Vector3());
+            if (rod) Object.assign(m, { rodDir: a0.clone().sub(p0).normalize(), rodTurn: rod.obj.getWorldQuaternion(new THREE.Quaternion()), rodFrom: rod.obj.getWorldPosition(new THREE.Vector3()).sub(p0.clone().add(a0).multiplyScalar(0.5)) });
+            else {
+                m.drawn = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 1, 16), new THREE.MeshStandardMaterial({ color: "#aab4c0", metalness: 0.8, roughness: 0.35 }));
+                m.drawn.scale.set(Math.max(0.005, m.length * 0.06), 1, Math.max(0.005, m.length * 0.06));
+                scene.add(m.drawn);
+            }
+        } else {
+            const parts = (Array.isArray(def.parts) ? def.parts : []).map((p) => ({ ...p, item: items.get(p.id) })).filter((p) => p.item);
+            m.ratio = num(def.ratio, 1);
+            m.parts = parts.map((p) => {
+                const { obj } = p.item;
+                const axis = AXIS[p.axis] ? p.axis : "z";
+                return { ...p, axis, base: obj.rotation[axis], home: { position: obj.position.clone(), rotation: obj.rotation.clone(), scale: obj.scale.clone() }, mats: materialsOf(obj) };
+            });
+        }
+        mechanisms.set(def.id, m);
+    }
+    // A smooth rise and fall over a window of the cycle, wrapping past its end.
+    const bump = (c, from, to) => {
+        const start = clamp01(num(from, 0));
+        const span = (clamp01(num(to, 1)) - start + 1) % 1 || 1;
+        const x = (c - start + 1) % 1;
+        return x > span ? 0 : Math.sin((Math.PI * x) / span) ** 2;
+    };
+    function runMechanism(m) {
+        const angle = m.theta * Math.PI * 2;
+        if (m.def.type === "crank") {
+            m.crank.obj.rotation[m.turn] = m.base + angle;
+            m.crank.obj.updateMatrixWorld(true);
+            if (!m.riding) placeAt(m.pin.obj, m.pinStart.clone().sub(m.pivot).applyAxisAngle(m.spin, angle).add(m.pivot));
+            m.pin.obj.updateMatrixWorld(true);
+            const p = centreOf(m.pin.obj);
+            // The slider sits on its track where the rod's length reaches from the crank pin, on the side it started.
+            const d = p.clone().sub(m.a0);
+            const along = d.dot(m.u);
+            const reach = Math.sqrt(Math.max(0, m.length ** 2 - Math.max(0, d.lengthSq() - along ** 2)));
+            m.t = [along + reach, along - reach].reduce((best, t) => (Math.abs(t - m.t) < Math.abs(best - m.t) ? t : best));
+            placeAt(m.slider.obj, m.s0.clone().addScaledVector(m.u, m.t));
+            const a = m.a0.clone().addScaledVector(m.u, m.t);
+            const mid = p.clone().add(a).multiplyScalar(0.5);
+            const link = a.clone().sub(p);
+            if (m.rod) {
+                const q = new THREE.Quaternion().setFromUnitVectors(m.rodDir, link.clone().normalize());
+                const { obj } = m.rod;
+                placeAt(obj, mid.clone().add(m.rodFrom.clone().applyQuaternion(q)));
+                const parentTurn = obj.parent ? obj.parent.getWorldQuaternion(new THREE.Quaternion()) : new THREE.Quaternion();
+                obj.quaternion.copy(parentTurn.invert().multiply(q.multiply(m.rodTurn)));
+            } else if (m.drawn) {
+                m.drawn.position.copy(mid);
+                m.drawn.quaternion.setFromUnitVectors(AXIS.y, link.clone().normalize());
+                m.drawn.scale.y = Math.max(0.001, link.length());
+            }
+        } else if (m.def.type === "gears") {
+            for (const p of m.parts) p.item.obj.rotation[p.axis] = p.base + angle * num(p.ratio, 1);
+        } else {
+            const c = (((m.theta * m.ratio) % 1) + 1) % 1;
+            for (const p of m.parts) {
+                const k = bump(c, p.from, p.to);
+                const { obj } = p.item;
+                if (isPoint(p.by)) obj.position.copy(p.home.position).addScaledVector(v3(p.by), k);
+                if (isPoint(p.rotate)) obj.rotation.set(...["x", "y", "z"].map((axis, i) => p.home.rotation[axis] + p.rotate[i] * DEG * k));
+                if (Number.isFinite(p.scale)) obj.scale.copy(p.home.scale).multiplyScalar(1 + (p.scale - 1) * k);
+                if (p.glow) for (const mat of p.mats) if (mat.emissive) mat.emissiveIntensity = mat.userData.glow + k * 1.2;
+            }
+        }
+    }
+    // The parts a mechanism moves, so steps that drive it can frame and label them.
+    const partsOf = (m) => (!m ? [] : m.def.type === "crank" ? [m.def.crank, m.def.pin, m.def.slider, m.def.rod].filter(Boolean) : m.parts.map((p) => p.id));
+    const actedIds = (a) => (a?.do === "drive" ? partsOf(mechanisms.get(a.target)) : [a?.target, a?.from, a?.to].filter((id) => typeof id === "string"));
+
     const all = new THREE.Box3();
     for (const item of items.values()) all.expandByObject(item.obj);
     for (const [, twin] of twins) all.expandByObject(twin);
@@ -562,7 +659,7 @@ export async function renderScene(spec, { root, makeLabel, inPlace = false }) {
             const v = p.project(camera);
             return Math.abs(v.x) > 1 || v.y > 1 || v.y < floor;
         };
-        const acted = actions.flatMap((a) => [a?.target, a?.from, a?.to]).filter((id) => typeof id === "string").map((id) => items.get(id.split("#")[0])?.obj);
+        const acted = actions.flatMap(actedIds).map((id) => items.get(id.split("#")[0])?.obj);
         const lost = (obj) => {
             let out = false;
             obj?.traverse((node) => (out ||= node.isMesh && isShown(node) && corners(new THREE.Box3().setFromObject(node)).some(outside)));
@@ -601,12 +698,14 @@ export async function renderScene(spec, { root, makeLabel, inPlace = false }) {
     // From the second step on, the camera moves in on the parts a step is about, keeping some of the model around them.
     const focusStep = (index, actions) => {
         if (index < 1 || flat || actions.some((a) => a?.do === "camera")) return;
-        const ids = new Set(actions.filter((a) => a && a.do !== "hide").flatMap((a) => [a.target, a.from, a.to, a.along]).filter((id) => typeof id === "string"));
+        const ids = new Set(actions.filter((a) => a && a.do !== "hide").flatMap((a) => [...actedIds(a), a.along]).filter((id) => typeof id === "string"));
         const boxes = [...ids].map((id) => items.get(id) ?? items.get(id.split("#")[0])).filter(Boolean).map((item) => reach(item, actions)).filter((b) => !b.isEmpty());
         for (const a of actions) for (const p of [a?.from, a?.to, ...(Array.isArray(a?.via) ? a.via : [])]) if (a?.do === "flow" && isPoint(p)) boxes.push(new THREE.Box3().setFromCenterAndSize(v3(p), new THREE.Vector3()));
         const model = union(robust(partBoxes(true)));
         if (!boxes.length || model.isEmpty()) return;
         const part = union(boxes);
+        // Driven mechanisms sweep further than their parts are now.
+        if (actions.some((x) => x?.do === "drive")) part.expandByVector(part.getSize(new THREE.Vector3()).multiplyScalar(0.25));
         const [size, whole] = [part.getSize(new THREE.Vector3()), model.getSize(new THREE.Vector3())];
         if (size.length() > whole.length() * 0.7) return frameTo(robust(partBoxes(true)));
         const keep = new THREE.Vector3(Math.max(size.x, whole.x * 0.4), Math.max(size.y, whole.y * 0.4), Math.max(size.z, whole.z * 0.4));
@@ -730,6 +829,16 @@ export async function renderScene(spec, { root, makeLabel, inPlace = false }) {
         const delay = instant ? 0 : Math.min(10, Math.max(0, num(a.delay, 0)));
         if (a.do === "flow") return flow(a, delay);
         if (a.do === "camera") return aim(a, duration, delay);
+        if (a.do === "drive") {
+            const m = mechanisms.get(a.target);
+            if (!m) return;
+            const run = (m.run = (m.run ?? 0) + 1);
+            m.speed = Number.isFinite(a.turns) ? 0 : num(a.value, 0.5);
+            if (!Number.isFinite(a.turns)) return;
+            const [from, to] = [m.theta, m.theta + a.turns];
+            const time = instant ? 0 : Math.min(12, Math.max(0.3, num(a.duration, Math.max(1.5, Math.abs(a.turns) * 3))));
+            return tween(time, delay, (k) => run === m.run && (m.theta = from + (to - from) * k));
+        }
         if (a.do === "hide" && flows.has(a.target)) return stopFlow(a.target, duration);
         const item = items.get(a.target);
         if (!item) return;
@@ -780,7 +889,7 @@ export async function renderScene(spec, { root, makeLabel, inPlace = false }) {
         const found = new Set();
         for (const a of actions) {
             if (!a || a.do === "hide") continue;
-            for (const id of [a.target, a.from, a.to].filter((v) => typeof v === "string")) {
+            for (const id of actedIds(a)) {
                 let item = items.get(id.split("#")[0]);
                 for (let hops = 0; item && !labelled(item) && hops < 8; hops++) item = items.get(item.def.parent);
                 if (item && labelled(item)) found.add(item);
@@ -824,6 +933,7 @@ export async function renderScene(spec, { root, makeLabel, inPlace = false }) {
         camera.position.copy(home.position);
         controls.target.copy(home.target);
         framed = opening.length ? opening : null;
+        for (const m of mechanisms.values()) Object.assign(m, { theta: 0, speed: 0, t: 0, run: (m.run ?? 0) + 1 });
         clearTimeout(refit);
         played = -1;
         focus = null;
@@ -1017,6 +1127,10 @@ export async function renderScene(spec, { root, makeLabel, inPlace = false }) {
             }
         }
         for (const item of items.values()) if (item.spin) item.obj.rotation[item.spin.axis] += item.spin.speed * Math.PI * 2 * dt;
+        for (const m of mechanisms.values()) {
+            if (m.speed) m.theta += m.speed * dt;
+            runMechanism(m);
+        }
         for (const wire of wires) layWire(wire);
         for (const [original, twin] of twins) follow(original, twin);
         for (const f of flows.values()) {

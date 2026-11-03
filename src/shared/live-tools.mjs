@@ -1,7 +1,7 @@
 // Overlay tool contracts shared by the standalone Ink Brain session and the Copilot CLI/App session extension.
 import { BOARD_ACTIONS, BOARD_TYPES } from "./board.mjs";
 import { SHAPE_KINDS } from "./geometry.mjs";
-import { MATERIALS, OBJECT_TYPES, PART_KINDS, SCENE_ACTIONS } from "./scene.mjs";
+import { MATERIALS, MECHANISM_TYPES, OBJECT_TYPES, PART_KINDS, SCENE_ACTIONS } from "./scene.mjs";
 
 const point = { type: "array", items: { type: "number" }, minItems: 2, maxItems: 2 };
 const region = (description) => ({
@@ -111,15 +111,17 @@ const SCENE_ACTION = {
                 "show (pops in an object that started hidden), hide (fades it out, or stops a flow by its id), move (to or by [x, y, z]), rotate (to or by [x, y, z] in degrees, about its pivot if it has one), " +
                 "scale (value), color (color), opacity (value 0 to 1), highlight (glow pulse), spin (axis; value is turns per second, 0 stops; about its pivot if it has one), " +
                 "flow (glowing particles streaming from one object or point to another, via points; give it an id and hide that id to stop it), " +
-                "camera (target object id to zoom to it, or to [x, y, z]; neither goes back to the overview), label (text), explode (target group; value 1.6 pulls its parts apart, 1 reassembles).",
+                "camera (target object id to zoom to it, or to [x, y, z]; neither goes back to the overview), label (text), explode (target group; value 1.6 pulls its parts apart, 1 reassembles), " +
+                "drive (target a mechanism: turns advances it that many turns over duration, for a stroke or a full cycle at a time; value runs it on at that many turns per second, 0 stops).",
         },
-        target: { type: "string", description: "Object id, a grid copy such as pins#3, or a flow id for hide." },
+        target: { type: "string", description: "Object id, a grid copy such as pins#3, a flow id for hide, or a mechanism id for drive." },
         to: { description: "move, rotate, camera: [x, y, z]. flow: object id or [x, y, z]." },
         from: { description: "flow: object id or [x, y, z]." },
         along: { type: "string", description: "flow: a wire id to stream along, for example a signal or current through a cable." },
         by: { ...vec3, description: "move, rotate: relative [x, y, z]." },
         via: { type: "array", items: vec3, maxItems: 20, description: "flow: points to pass through." },
-        value: { type: "number", description: "scale, opacity, spin speed, explode spread or camera zoom." },
+        value: { type: "number", description: "scale, opacity, spin speed, explode spread, camera zoom or drive speed." },
+        turns: { type: "number", description: "drive: how many turns to advance the mechanism, such as 0.5 for one engine stroke." },
         color: { type: "string" },
         text: { type: "string" },
         axis: { type: "string", enum: ["x", "y", "z"] },
@@ -143,7 +145,7 @@ const SCENE_OBJECT = {
                 "loft (sections: a smooth body through cross-sections along x, closed at both ends: vehicle bodies, fuselages, hulls, bottles, animals, organs, handles; or region and outline: its silhouette traced on a side or front view of it in the picture, for its true profile), " +
                 "extrude (points: a flat [x, y] outline with optional holes, depth thick: panels, brackets, plates, blades, silhouettes), lathe (points: a [radius, y] profile spun around y: wheels, knobs, bottles, pistons, lenses, bolts), gear (radius, teeth, depth, hole; faces the front), spring (radius, height, coils, tube), " +
                 "text (text, size [height]), arrow (from, to), path (points: a tube along them, with radii to taper or bulge it; curve false for straight segments, closed), " +
-                "wire (from, to: a cable that arcs between two parts and stays attached when they move; style ribbon is a flat cable; reveal it with show and it lays itself from end to end), group (a parent that moves its children together), " +
+                "wire (from, to: a cable that arcs between two parts and stays attached when they move; style ribbon is a flat cable, and style rod a straight rigid link joining the two parts' middles, such as a strut, linkage arm or push rod; reveal it with show and it lays itself from end to end), group (a parent that moves its children together), " +
                 "image (src: the saved path of an image from image_generation, size [height]), " +
                 "base (the body of a flat thing pictured on screen from above or the front, such as a circuit board, panel or keyboard: region is its picture in screenshot pixels, size [width, thickness] in real units, the depth follows the picture; outline and holes [x, y, radius] are traced on the picture), " +
                 "part (a ready-made electronic component, modelled in detail: part names it; facing is the picture edge its opening faces; color tints its plastic, insert or light). " +
@@ -224,7 +226,7 @@ const SCENE_OBJECT = {
         },
         at: { ...point, description: "With on: its centre in the picture, in screenshot pixels." },
         footprint: { ...point, description: "With on: its width and height in the picture, in screenshot pixels." },
-        style: { type: "string", enum: ["round", "ribbon"], description: "wire: ribbon is a flat cable, such as a display or camera ribbon." },
+        style: { type: "string", enum: ["round", "ribbon", "rod"], description: "wire: ribbon is a flat cable, such as a display or camera ribbon; rod is a straight rigid link." },
         width: { type: "number", description: "wire: ribbon width." },
         curve: { type: "boolean" },
         closed: { type: "boolean" },
@@ -258,6 +260,49 @@ const SCENE_OBJECT = {
     required: ["id", "type"],
 };
 
+const MECHANISM = {
+    type: "object",
+    properties: {
+        id: { type: "string" },
+        type: {
+            type: "string",
+            enum: MECHANISM_TYPES,
+            description:
+                "crank: a crank turning about its pivot pushes a slider such as a piston along its track through a rod that always joins the crank pin and the slider: engines, pumps, saws. " +
+                "gears: parts turning together at fixed ratios about their own pivots, meshed gears the opposite way (ratio minus driver teeth over driven teeth): gear trains, fans, shafts, turbines, a differential's carrier and pinions. " +
+                "cycle: parts that move, turn, swell or glow once during their window of every cycle and come back: valves, cams, sparks, heart chambers and valves.",
+        },
+        crank: { type: "string", description: "crank: the part that turns, with a pivot on its axle." },
+        pin: { type: "string", description: "crank: the crank pin, a part riding on the crank (its child) where the rod attaches." },
+        slider: { type: "string", description: "crank: the part pushed along a straight track, such as a piston." },
+        rod: { type: "string", description: "crank: the connecting rod, placed every frame to join pin and slider; omit it to have one drawn." },
+        turn: { type: "string", enum: ["x", "y", "z"], description: "crank: the axis it turns about (default z)." },
+        axis: { type: "string", enum: ["x", "y", "z"], description: "crank: the slider's direction of travel (default y)." },
+        ratio: { type: "number", description: "cycle: cycles per turn of the mechanism, such as 0.5 for a four-stroke engine's valves (default 1)." },
+        parts: {
+            type: "array",
+            maxItems: 30,
+            items: {
+                type: "object",
+                properties: {
+                    id: { type: "string" },
+                    axis: { type: "string", enum: ["x", "y", "z"], description: "gears: the axis it turns about (default z)." },
+                    ratio: { type: "number", description: "gears: its turns per turn of the mechanism (default 1; negative turns the other way)." },
+                    from: { type: "number", description: "cycle: where in each cycle it starts to move, 0 to 1." },
+                    to: { type: "number", description: "cycle: where in each cycle it is back, 0 to 1." },
+                    by: { ...vec3, description: "cycle: how far it moves at the peak." },
+                    rotate: { ...vec3, description: "cycle: degrees it turns at the peak, about its pivot." },
+                    scale: { type: "number", description: "cycle: its size at the peak, such as 0.9 for a chamber squeezing." },
+                    glow: { type: "boolean", description: "cycle: glow at the peak, such as a spark." },
+                },
+                required: ["id"],
+            },
+            description: "gears, cycle: the parts it moves.",
+        },
+    },
+    required: ["id", "type"],
+};
+
 const SCENE_PROPERTIES = {
     view: { type: "string", enum: ["3d", "flat"], description: "flat gives a front-on 2D look for timelines, message flows and charts. Default 3d." },
     objects: {
@@ -266,6 +311,12 @@ const SCENE_PROPERTIES = {
         maxItems: 120,
         items: SCENE_OBJECT,
         description: "Use real dimensions (for example centimetres) so proportions are true; y is up, and the camera frames everything. A model of a real thing needs 20 to 50 objects: every part that makes it recognisable.",
+    },
+    mechanisms: {
+        type: "array",
+        maxItems: 12,
+        items: MECHANISM,
+        description: "Linked moving parts that stay in step as one input turns, so a machine runs like the real thing; play them with drive. A mechanism moves its parts, so do not also move them yourself.",
     },
     camera: { type: "object", description: "The side the opening view looks from (position, looking at target); the view always frames the whole model.", properties: { position: vec3, target: { description: "Object id or [x, y, z]." } } },
 };

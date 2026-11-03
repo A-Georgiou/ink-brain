@@ -5,7 +5,9 @@ export const OBJECT_TYPES = ["box", "sphere", "cylinder", "cone", "torus", "caps
 // Ready-made components for type part; their shapes live in the overlay's parts.js.
 export const PART_KINDS = ["usb-a", "usb-b", "usb-c", "micro-usb", "hdmi", "micro-hdmi", "ethernet", "audio-jack", "barrel-jack", "microsd", "header", "socket", "ffc", "chip", "can", "capacitor", "smd", "crystal", "led", "button", "display"];
 export const MATERIALS = ["metal", "chrome", "gold", "copper", "paint", "plastic", "rubber", "glass", "pcb", "screen", "matte"];
-export const SCENE_ACTIONS = ["show", "hide", "move", "rotate", "scale", "color", "opacity", "highlight", "spin", "flow", "camera", "label", "explode"];
+export const SCENE_ACTIONS = ["show", "hide", "move", "rotate", "scale", "color", "opacity", "highlight", "spin", "flow", "camera", "label", "explode", "drive"];
+// Linked moving parts driven by one input that turns: a crank and slider, meshed or coupled rotations, and motions timed within each turn.
+export const MECHANISM_TYPES = ["crank", "gears", "cycle"];
 
 const isPoint = (p) => Array.isArray(p) && p.length === 3 && p.every(Number.isFinite);
 const isFlatPoint = (p) => Array.isArray(p) && p.length === 2 && p.every(Number.isFinite);
@@ -85,11 +87,32 @@ function objectsProblem(scene) {
             node = parents.get(node);
         }
     }
+    return mechanismsProblem(scene.mechanisms, ids, names);
+}
+
+const AXES = ["x", "y", "z"];
+
+function mechanismsProblem(mechanisms = [], ids, names) {
+    if (!Array.isArray(mechanisms) || mechanisms.length > 12) return "mechanisms must be a list of at most 12";
+    const seen = new Set();
+    for (const m of mechanisms) {
+        const id = m?.id;
+        if (typeof id !== "string" || !id.trim() || seen.has(id) || ids.has(id)) return `each mechanism needs its own id, unlike any object's (${JSON.stringify(id)})`;
+        seen.add(id);
+        if (!MECHANISM_TYPES.includes(m.type)) return `mechanism "${id}" has unknown type "${m.type}"; use ${MECHANISM_TYPES.join(", ")}`;
+        const parts = m.type === "crank" ? [m.crank, m.pin, m.slider, ...(m.rod === undefined ? [] : [m.rod])] : Array.isArray(m.parts) ? m.parts.map((part) => part?.id) : [];
+        if (!parts.length) return `mechanism "${id}" needs parts, each with an id`;
+        const bad = parts.find((part) => !names.has(part));
+        if (bad !== undefined) return `mechanism "${id}" moves ${JSON.stringify(bad)}, which is not an object id`;
+        const axes = m.type === "crank" ? [m.axis, m.turn] : m.parts.map((part) => part.axis);
+        if (axes.some((axis) => axis !== undefined && !AXES.includes(axis))) return `mechanism "${id}" axes must be x, y or z`;
+    }
     return null;
 }
 
-function actionProblem(action, ids, flows, wires) {
+function actionProblem(action, ids, flows, wires, mechanisms) {
     if (!SCENE_ACTIONS.includes(action?.do)) return `unknown action "${action?.do}"; use ${SCENE_ACTIONS.join(", ")}`;
+    if (action.do === "drive") return mechanisms.has(action.target) ? null : `drive targets unknown mechanism "${action.target}"`;
     if (!TARGETLESS.has(action.do) && !ids.has(action.target) && !(action.do === "hide" && flows.has(action.target))) return `${action.do} targets unknown object "${action.target}"`;
     if (action.do !== "flow") return null;
     if (action.along !== undefined) return wires.has(action.along) ? null : `flow along "${action.along}" is not a wire id`;
@@ -102,6 +125,7 @@ const namesOf = (scene, steps) => ({
     ids: namesIn(scene.objects),
     flows: new Set(steps.flat().filter((action) => action?.do === "flow" && typeof action.id === "string").map((action) => action.id)),
     wires: new Set(scene.objects.filter((object) => object.type === "wire").map((object) => object.id)),
+    mechanisms: new Set((Array.isArray(scene.mechanisms) ? scene.mechanisms : []).map((m) => m?.id)),
 });
 
 // A problem the model can fix, or null; steps holds one action list per narrated step.
@@ -111,10 +135,10 @@ export function validateScene(scene, steps = []) {
     if (!Array.isArray(steps) || steps.length > 12 || steps.some((actions) => !Array.isArray(actions) || actions.length > 40)) {
         return "scene steps must be at most 12 lists of at most 40 actions";
     }
-    const { ids, flows, wires } = namesOf(scene, steps);
+    const { ids, flows, wires, mechanisms } = namesOf(scene, steps);
     for (const [index, actions] of steps.entries()) {
         for (const action of actions) {
-            const bad = actionProblem(action, ids, flows, wires);
+            const bad = actionProblem(action, ids, flows, wires, mechanisms);
             if (bad) return `scene step ${index + 1}: ${bad}`;
         }
     }
@@ -126,11 +150,11 @@ export function playableSteps(scene, steps) {
     const problem = objectsProblem(scene);
     if (problem) return { problem, steps: [], dropped: [] };
     const lists = steps.map((actions) => (Array.isArray(actions) ? actions.slice(0, 40) : []));
-    const { ids, flows, wires } = namesOf(scene, lists);
+    const { ids, flows, wires, mechanisms } = namesOf(scene, lists);
     const dropped = [];
     const kept = lists.map((actions, index) =>
         actions.filter((action) => {
-            const bad = actionProblem(action, ids, flows, wires);
+            const bad = actionProblem(action, ids, flows, wires, mechanisms);
             if (bad) dropped.push(`scene step ${index + 1}: ${bad}`);
             return !bad;
         }),

@@ -175,3 +175,11 @@ test("3D stages take the most free room beside the circled thing and only ever c
     assert.deepEqual(stageSpot({ target: { x: 40, y: 300, w: 200, h: 150 }, view, max: [920, 700], min: [400, 300] }).w, 920);
     assert.equal(stageSpot({ target: { x: 0, y: 0, w: 1512, h: 982 }, view, max: [920, 700], min: [400, 300] }), null);
 });
+
+test("scene mechanisms must move real parts, and steps drive only mechanisms", () => {
+    const objects = [{ id: "crank", type: "group", pivot: [0, 0, 0] }, { id: "pin", type: "sphere", parent: "crank" }, { id: "piston", type: "cylinder" }];
+    const mechanisms = [{ id: "engine", type: "crank", crank: "crank", pin: "pin", slider: "piston" }];
+    assert.equal(validateScene({ objects, mechanisms }, [[{ do: "drive", target: "engine", turns: 0.5 }]]), null);
+    assert.match(validateScene({ objects, mechanisms: [{ ...mechanisms[0], slider: "pistn" }] }), /moves "pistn"/);
+    assert.match(validateScene({ objects, mechanisms }, [[{ do: "drive", target: "piston" }]]), /unknown mechanism "piston"/);
+});

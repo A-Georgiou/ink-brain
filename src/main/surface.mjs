@@ -137,7 +137,7 @@ export class Surface {
                 }
             }
         }
-        const content = JSON.stringify({ view: scene.view, camera: scene.camera, objects, steps: actions, autoplay: !steps, stepSeconds: scene.step_seconds, loop: scene.loop });
+        const content = JSON.stringify({ view: scene.view, camera: scene.camera, objects, mechanisms: scene.mechanisms, steps: actions, autoplay: !steps, stepSeconds: scene.step_seconds, loop: scene.loop });
         return this.#showPanel(args, "scene", content);
     }
 
