@@ -5,6 +5,8 @@ import { clearSpot, validateBoard } from "../src/shared/board.mjs";
 import { compile } from "../src/shared/mathexpr.mjs";
 import { validateScene } from "../src/shared/scene.mjs";
 import { traceOutline } from "../src/shared/trace.mjs";
+import * as THREE from "three";
+import { recentreRings } from "../src/overlay/repair.js";
 import { bubbleSpot, cropAround, describeMarks, modelImageSize, overlapArea, shapeToOverlay, snapShape, stageSpot, validateShape } from "../src/shared/geometry.mjs";
 
 test("model screenshots are capped at the configured long edge", () => {
@@ -196,4 +198,26 @@ test("pictures trace to the outline of the thing in them, without the lines and 
     assert.ok(outline.length >= 8 && outline.length <= 96);
     for (const [u, v] of outline) assert.ok(Math.abs(Math.hypot(u * width - 50, v * height - 50) - 30) < 3);
     assert.equal(traceOutline({ width, height, data: new Uint8ClampedArray(width * height * 4).fill(255) }), null);
+});
+
+test("radial copies set on a wheel with no parent go round the wheel's axle, not the world's", () => {
+    const record = (def, obj) => ({ def, obj, home: { position: obj.position.clone() } });
+    const wheel = new THREE.Mesh(new THREE.CylinderGeometry(3, 3, 2));
+    wheel.position.set(-14, 3, 9);
+    wheel.rotation.x = Math.PI / 2;
+    const spoke = new THREE.Mesh(new THREE.BoxGeometry(0.3, 4.4, 0.2));
+    spoke.position.set(-14, 3, 10);
+    const ring = new THREE.Group();
+    for (let k = 0; k < 5; k++) ring.add(new THREE.Group().add(k ? spoke.clone() : spoke).rotateZ((k / 5) * Math.PI * 2));
+    ring.userData.copies = ring.children.map((turn) => turn.children[0]);
+    const scene = new THREE.Scene().add(wheel, ring);
+    scene.updateMatrixWorld(true);
+    const items = new Map([["wheel", record({ id: "wheel", type: "cylinder" }, wheel)], ["spokes", record({ id: "spokes", type: "box", radial: 5, axis: "z" }, ring)]]);
+    ring.userData.copies.forEach((copy, n) => items.set(`spokes#${n + 1}`, record({ id: `spokes#${n + 1}`, copy: true }, copy)));
+    recentreRings(items);
+    for (const copy of ring.userData.copies) {
+        const centre = new THREE.Box3().setFromObject(copy).getCenter(new THREE.Vector3());
+        assert.ok(Math.hypot(centre.x + 14, centre.y - 3) < 0.01 && Math.abs(centre.z - 10) < 0.01);
+    }
+    assert.deepEqual(items.get("spokes").home.position.toArray(), [-14, 3, 0]);
 });

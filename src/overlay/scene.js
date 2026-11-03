@@ -6,6 +6,7 @@ import { isRegion } from "/shared/geometry.mjs";
 import { gridCount } from "/shared/scene.mjs";
 import { traceOutline } from "/shared/trace.mjs";
 import { buildPart } from "./parts.js";
+import { recentreRings } from "./repair.js";
 import { arrowFor, baked, baseOf, clamp01, geometryFor, isFlat, isPoint, num, perPixel, ribbonGeometry, sideSpot, sizeOf, traced, v3 } from "./shapes.js";
 
 const PALETTE = ["#a371f7", "#58a6ff", "#3fb950", "#f2cc60", "#ff7b72", "#79c0ff", "#d2a8ff", "#ffa657"];
@@ -484,6 +485,7 @@ export async function renderScene(spec, { root, makeLabel, inPlace = false }) {
         (parent && !cycle ? parent : scene).add(item.obj);
     }
     scene.updateMatrixWorld(true);
+    recentreRings(items);
     await carve();
     // A mirrored object gets a twin across its parent's centre plane that copies every move, mirrored.
     const twins = [];
