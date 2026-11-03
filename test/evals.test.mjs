@@ -9,7 +9,7 @@ import { judgeDisagreement, limitsFor, overall, passes } from "../evals/judge.mj
 import { latencyMetrics, replayTimeline } from "../evals/latency.mjs";
 import { measureLayout } from "../evals/layout.mjs";
 import { scriptedAnswer } from "../evals/learner.mjs";
-import { compareRuns, sameCodeControl } from "../evals/stats.mjs";
+import { comparableReplayRun, compareRuns, sameCodeControl } from "../evals/stats.mjs";
 import { awaitStage } from "../evals/snapshot.mjs";
 import { PairJudge, pairOutcome, pairPrompt, pairSources, sourceId, summarizePairs } from "../evals/versus.mjs";
 
@@ -134,6 +134,20 @@ test("integration reports refuse known judge or harness mismatches", () => {
     assert.match(checkMeasurement([base, { ...base, measurement: null }]), /not recorded/);
     assert.throws(() => checkMeasurement([base, { ...base, measurement: "v2" }]), /measurement code differs/);
     assert.throws(() => checkMeasurement([base, { ...base, judge: "gpt" }]), /judge models differ/);
+});
+
+test("legacy replays use recorded first words and omit unreliable completion latency", () => {
+    const sample = { scenario: "legacy", category: "3d", score: 2, pass: false, metrics: { firstWords: 14_000, firstVisual: 18_000, total: 60_000 } };
+    const normalized = comparableReplayRun(sample, { firstWords: 3_000, tools: [], text: "Look" });
+    assert.deepEqual(normalized.metrics, { firstWords: 3_000, firstVisual: 18_000, total: null });
+    assert.equal(normalized.replayTimingApproximate, true);
+    assert.equal(comparableReplayRun(sample, { timeline: [{ kind: "text", at: 3_000 }], firstWords: 3_000 }), sample);
+    assert.equal(comparableReplayRun(sample, { timeline: [{ kind: "input", at: 3_000 }], firstWords: 3_000 }).metrics.total, null);
+    const candidate = [{ scenario: "legacy", category: "3d", score: 3, pass: false, metrics: { firstWords: 4_000, firstVisual: 10_000, total: 30_000 } }];
+    const report = integrationReport(candidate, [normalized], { bootstrap: 1 });
+    assert.equal(report.overall.firstWords.delta, 1_000);
+    assert.equal(report.overall.total, null);
+    assert.deepEqual(report.approximate, [0, 1]);
 });
 
 test("paired stats can compare unjudged deterministic metrics", () => {

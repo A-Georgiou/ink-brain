@@ -52,6 +52,7 @@ export function integrationReport(candidate, baseline, { controls = {}, top = 3,
         improvements: ranked.reverse().filter((row) => row.delta > 0).slice(0, top),
         nulls: Object.entries(controls).map(([label, runs]) => ({ label, score: control(runs, "score", bootstrap), firstVisual: control(runs, "metrics.firstVisual", bootstrap) })),
         unpaired: score.perScenario.filter((row) => row.runs.includes(1)).length,
+        approximate: [left, right].map((runs) => runs.filter((run) => run.replayTimingApproximate).length),
     };
 }
 
@@ -64,6 +65,7 @@ export function printIntegration(report, candidate, baseline) {
         console.log(`  Latency Δ first words ${paired(firstWords, 0.001, "s")}; first visual ${paired(firstVisual, 0.001, "s")}; done ${paired(total, 0.001, "s")}`);
     };
     console.log(`Integration: ${candidate} (candidate) vs ${baseline} (baseline); paired scenario means and 95% bootstrap CIs; negative latency is faster.`);
+    if (report.approximate.some(Boolean)) console.log(`Replay timing: ${report.approximate[0]} candidate and ${report.approximate[1]} baseline runs lacked text deltas; first words use source timestamps and done latency is unavailable for those pairs.`);
     row("Overall", report.overall);
     for (const { category, ...value } of report.categories) row(category, value);
     for (const [title, rows] of [["Top regressions", report.regressions], ["Top improvements", report.improvements]]) {
@@ -89,6 +91,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     const warning = checkMeasurement(summaries);
     const options = { repeats };
     const controls = Object.fromEntries(labels.map((label) => [label, loadResults(label, options)]));
+    const paired = (group) => group.split("+").flatMap((label) => controls[label]);
     if (warning) console.log(`WARNING: ${warning}`);
-    printIntegration(integrationReport(loadResults(args[0], options), loadResults(args[2], options), { top, controls }), args[0], args[2]);
+    printIntegration(integrationReport(paired(args[0]), paired(args[2]), { top, controls }), args[0], args[2]);
 }

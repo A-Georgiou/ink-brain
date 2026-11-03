@@ -84,9 +84,21 @@ export function loadResults(labels, { repeats = Infinity } = {}) {
     return labels.split("+").flatMap((label) => {
         if (!/^[\w.-]+$/.test(label) || label.startsWith(".")) throw new Error(`invalid eval label: ${label}`);
         const file = path.join(here, "results", label, "summary.json");
-        const results = JSON.parse(fs.readFileSync(file, "utf8")).results;
-        return results.filter((run) => Number(run.id.match(/~(\d+)$/)?.[1] ?? 1) <= repeats);
+        const summary = JSON.parse(fs.readFileSync(file, "utf8"));
+        const results = summary.results.filter((run) => Number(run.id.match(/~(\d+)$/)?.[1] ?? 1) <= repeats);
+        if (!summary.replayedFrom) return results;
+        const source = summary.replayedFrom;
+        if (!/^[\w.-]+$/.test(source) || source.startsWith(".")) throw new Error(`invalid replay source: ${source}`);
+        return results.map((run) => {
+            if (!/^[\w.~-]+$/.test(run.id) || run.id.startsWith(".")) throw new Error(`invalid replay run: ${run.id}`);
+            return comparableReplayRun(run, JSON.parse(fs.readFileSync(path.join(here, "results", source, run.id, "record.json"), "utf8")));
+        });
     });
+}
+
+export function comparableReplayRun(run, source) {
+    if (source?.timeline?.some((event) => event.kind === "text")) return run;
+    return { ...run, replayTimingApproximate: true, metrics: { ...run.metrics, firstWords: Number.isFinite(source?.firstWords) ? source.firstWords : null, total: null } };
 }
 
 export function sameCodeControl(runs, options) {
