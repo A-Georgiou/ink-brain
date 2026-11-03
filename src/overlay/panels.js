@@ -322,9 +322,9 @@ export class Panels {
         const margin = 16;
         const [defaultWidth, defaultHeight] = DEFAULT_SIZE[kind];
         const min = MIN_SIZE[kind] ?? [240, 160];
-        const keepSize = !isNew && kind === "scene" && panel.frameKind === kind && panel.frame;
-        const width = clamp(rect.width ?? (isNew ? defaultWidth : el.offsetWidth), keepSize && !Number.isFinite(rect.width) ? 1 : min[0], innerWidth - margin * 2);
-        const height = clamp(rect.height ?? (isNew ? defaultHeight : el.offsetHeight), keepSize && !Number.isFinite(rect.height) ? 1 : min[1], innerHeight - margin * 2);
+        const keepSize = !isNew && kind === "scene" && panel.frameKind === kind && panel.frame && !panel.frameFrameless;
+        const width = clamp(rect.width ?? (isNew ? defaultWidth : parseFloat(el.style.width) || el.offsetWidth), keepSize && !Number.isFinite(rect.width) ? 1 : min[0], innerWidth - margin * 2);
+        const height = clamp(rect.height ?? (isNew ? defaultHeight : parseFloat(el.style.height) || el.offsetHeight), keepSize && !Number.isFinite(rect.height) ? 1 : min[1], innerHeight - margin * 2);
         const placeSelf = !Number.isFinite(rect.x) || !Number.isFinite(rect.y);
         if (isNew) panel.autoPlaced = placeSelf;
         const target = isNew && placeSelf && kind === "scene" && !Number.isFinite(rect.width) && !Number.isFinite(rect.height) ? this.target() : null;
@@ -332,7 +332,7 @@ export class Panels {
         const roomy = target && stageSpot({ target: asRect(target), view: { width: innerWidth, height: innerHeight }, max: STAGE_MAX, min: STAGE_MIN, others });
         // A panel carried on from an earlier turn gets out of the way if the user has since marked something under it.
         const inTheWay = !isNew && placeSelf && panel.autoPlaced && covers(this.target(), asRect(el.getBoundingClientRect()));
-        const spot = roomy || (isNew || inTheWay ? this.#place(width, height, panel, placeSelf ? null : rect, undefined, min) : { x: placeSelf ? el.offsetLeft : rect.x, y: placeSelf ? el.offsetTop : rect.y, w: width, h: height });
+        const spot = roomy || (isNew || inTheWay ? this.#place(width, height, panel, placeSelf ? null : rect, undefined, min) : { x: placeSelf ? parseFloat(el.style.left) || el.offsetLeft : rect.x, y: placeSelf ? parseFloat(el.style.top) || el.offsetTop : rect.y, w: width, h: height });
         el.style.width = `${spot.w}px`;
         el.style.height = `${spot.h}px`;
         el.style.left = `${clamp(spot.x, margin, innerWidth - spot.w - margin)}px`;
@@ -390,6 +390,7 @@ export class Panels {
             panel.el.querySelector(".panel-body").replaceChildren(frame);
             this.#frames.set(frame.contentWindow, panel);
         }
+        panel.frameFrameless = panel.el.classList.contains("frameless");
         panel.frame.title = panel.el.querySelector(".panel-title").textContent;
         const renderId = (panel.renderId = (panel.renderId ?? 0) + 1);
         return new Promise((resolve) => {
