@@ -265,6 +265,32 @@ export const SCENARIOS = [
         ],
     },
     {
+        id: "corkscrew",
+        category: "3d",
+        url: `${FILE}Corkscrew_P1150886.jpg`,
+        locate: () => document.querySelector("#file img"),
+        ask: "how does this get the cork out?",
+        expect: ["scene"],
+        points: [
+            "with the bell resting on the bottle's neck, turning the top handle screws the helical worm down into the cork",
+            "the wings end in toothed pinions that mesh with a rack of rings on the central shaft, so the wings rise as the worm goes in",
+            "pushing both wings down turns the pinions, which drive the shaft, worm and cork up out of the bottle, the wings working as levers",
+        ],
+    },
+    {
+        id: "can-opener",
+        category: "3d",
+        url: `${FILE}Kitchen-Modern-Can-Opener.jpg`,
+        locate: () => document.querySelector("#file img"),
+        ask: "how does this cut the lid off a can?",
+        expect: ["scene"],
+        points: [
+            "squeezing the handles pushes the sharp cutting wheel through the lid just inside the rim and clamps the rim against the toothed feed wheel",
+            "turning the key spins the feed wheel, whose teeth grip the rim and pull the can around",
+            "the cutting wheel rolls around the lid as the can turns, slicing it until the lid comes free",
+        ],
+    },
+    {
         id: "nextjs-issue",
         category: "research",
         url: "https://github.com/vercel/next.js/issues/56441",
