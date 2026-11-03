@@ -177,7 +177,7 @@ const SCENE_OBJECT = {
         order: { type: "string", enum: ["rows", "columns"] },
         points: { type: "array", items: { type: "array", items: { type: "number" }, minItems: 2, maxItems: 3 }, maxItems: 200, description: "path: [x, y, z] points. extrude: [x, y] outline. lathe: [radius, y] profile." },
         radii: { type: "array", items: { type: "number" }, maxItems: 200, description: "path: its radius at each point, for tubes that taper or bulge, such as limbs, horns, branches or blood vessels." },
-        radial: { type: "integer", description: "Repeat it this many times evenly around an axis through its parent's origin (position is one copy's offset from it), for spokes, blades, bolts or petals. Copies are addressable as id#n." },
+        radial: { type: "integer", description: "Repeat it this many times evenly around an axis through its parent's origin (position is one copy's offset from it), for spokes, blades, bolts or petals: put it in a group centred on the hub it goes round. Copies are addressable as id#n." },
         axis: { type: "string", enum: ["x", "y", "z"], description: "radial: the axis the copies go around (default y)." },
         sections: {
             type: "array",
