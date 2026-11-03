@@ -308,3 +308,13 @@ test("a chain path wraps a band of rollers across the plane of its loop", () => 
     assert.ok(box.max.z - box.min.z > 0.2 && box.max.z - box.min.z < 0.5, "the chain's width runs along the axles it wraps");
     assert.ok(geometryFor(loop).attributes.position.count > geometryFor({ ...loop, style: undefined }).attributes.position.count, "a chain carries rollers a plain tube does not");
 });
+
+test("a loft takes a side-on silhouette in real units, without a picture to trace", () => {
+    const outline = [[-2, 0], [-1.6, 0.6], [0, 1], [1.6, 0.6], [2, 0]];
+    assert.equal(validateScene({ objects: [{ id: "body", type: "loft", outline, size: [null, 1.4] }] }), null);
+    assert.match(validateScene({ objects: [{ id: "body", type: "loft", outline: outline.slice(0, 2) }] }), /loft "body" needs at least two sections/);
+    const box = new THREE.Box3().setFromBufferAttribute(geometryFor({ id: "body", type: "loft", outline, size: [null, 1.4] }).attributes.position);
+    assert.ok(Math.abs(box.max.x - 2) < 0.1 && Math.abs(box.min.x + 2) < 0.1, "its length follows the outline");
+    assert.ok(Math.abs(box.max.y - 1) < 0.1 && box.min.y > -0.1, "its height follows the outline, with y up");
+    assert.ok(Math.abs(box.max.z - 0.7) < 0.1, "its width is half of size[1] each side");
+});

@@ -78,10 +78,8 @@ export const perPixel = (def) => Math.max(0.001, num(def.size?.[0] ?? def.size, 
 // A picture point in a traced loft's side plane: x across the picture, y up from its bottom edge.
 export const sideSpot = (def, [x, y]) => [(x - def.region.x - def.region.w / 2) * perPixel(def), (def.region.y + def.region.h - y) * perPixel(def)];
 
-// Slices a traced silhouette into sections at real scale, the width rounding off towards both ends.
-function tracedSections(def) {
-    const width = Math.max(0.001, num(def.size?.[1], num(def.size?.[0] ?? def.size, 1) * 0.4));
-    const poly = def.outline.filter(isFlat);
+// Slices a side-on silhouette into cross-sections along its length, the width rounding off towards both ends.
+function sliceOutline(poly, width, def) {
     const xs = poly.map(([x]) => x);
     const [lo, hi] = [Math.min(...xs), Math.max(...xs)];
     const sections = [];
@@ -94,18 +92,32 @@ function tracedSections(def) {
             if (ax !== bx && (ax - px) * (bx - px) <= 0) hits.push(ay + ((px - ax) / (bx - ax)) * (by - ay));
         });
         if (hits.length < 2) continue;
-        const [top, bottom] = [Math.min(...hits), Math.max(...hits)];
+        const [low, high] = [Math.min(...hits), Math.max(...hits)];
         const plan = (1 - Math.abs(2 * t - 1) ** 6) ** (1 / 6);
-        const [at, y] = sideSpot(def, [px, (top + bottom) / 2]);
-        sections.push({ at, y, width: width * plan, height: (bottom - top) * perPixel(def), round: def.round, top: def.top, bottom: def.bottom });
+        sections.push({ at: px, y: (low + high) / 2, width: width * plan, height: high - low, round: def.round, top: def.top, bottom: def.bottom });
     }
     if (sections.length < 2) throw new Error(`loft "${def.id}": its outline is too thin to trace`);
     return sections;
 }
 
+// A silhouette traced on the user's picture, mapped into real units before it is sliced.
+function tracedSections(def) {
+    const width = Math.max(0.001, num(def.size?.[1], num(def.size?.[0] ?? def.size, 1) * 0.4));
+    return sliceOutline(def.outline.filter(isFlat).map((p) => sideSpot(def, p)), width, def);
+}
+
+// A silhouette the model draws itself, already in real units with y up.
+function outlineSections(def) {
+    const poly = def.outline.filter(isFlat);
+    const xs = poly.map(([x]) => x);
+    const width = Math.max(0.001, num(def.size?.[1] ?? def.height, (Math.max(...xs) - Math.min(...xs)) * 0.4));
+    return sliceOutline(poly, width, def);
+}
+
 // Lofts sections along x: rounded rectangles (round 1 is an ellipse) tapered by top and bottom.
 function loftGeometry(def) {
-    const given = traced(def) ? tracedSections(def) : def.sections;
+    const drawn = Array.isArray(def.outline) && def.outline.filter(isFlat).length >= 3;
+    const given = traced(def) ? tracedSections(def) : drawn ? outlineSections(def) : def.sections;
     const keys = given.filter((s) => [s?.at, s?.width, s?.height].every(Number.isFinite)).sort((a, b) => a.at - b.at);
     const span = keys.at(-1).at - keys[0].at || 1;
     const xs = [];

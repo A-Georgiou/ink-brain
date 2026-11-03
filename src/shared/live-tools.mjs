@@ -142,7 +142,7 @@ const SCENE_OBJECT = {
             enum: OBJECT_TYPES,
             description:
                 "box (size [w, h, d]; radius rounds the corners, 0 is sharp), sphere (radius), cylinder (radius, height, radius_top), cone (radius, height), torus (radius, tube), capsule (radius, length), plane (size [w, h]), " +
-                "loft (sections: a smooth body through cross-sections along x, closed at both ends: vehicle bodies, fuselages, hulls, bottles, animals, organs, handles; or region: its picture in a side or front view, whose silhouette is traced for you so it has the true profile), " +
+                "loft (a smooth body closed at both ends: vehicle bodies, fuselages, hulls, bottles, animals, organs, handles, housings; from outline, its side-on silhouette, which is swept into a rounded body, or sections, its cross-sections along x, or region, its picture in a side or front view, whose silhouette is traced for you so it has the true profile), " +
                 "extrude (points: a flat [x, y] outline with optional holes, depth thick: panels, brackets, plates, blades, silhouettes), lathe (points: a [radius, y] profile spun around y: wheels, knobs, bottles, pistons, lenses, bolts), gear (radius, teeth, depth, hole; faces the front), spring (radius, height, coils, tube), " +
                 "text (text, size [height]), arrow (from, to), path (points: a tube along them, with radii to taper or bulge it; curve false for straight segments, closed; style chain wraps a roller chain round the wheels its closed loop passes), " +
                 "wire (from, to: a cable that arcs between two parts and stays attached when they move; style ribbon is a flat cable, and style rod a straight rigid link joining the two parts' middles, such as a strut, linkage arm or push rod; reveal it with show and it lays itself from end to end), group (a parent that moves its children together), " +
@@ -213,7 +213,8 @@ const SCENE_OBJECT = {
             maxItems: 200,
             description:
                 "Traced on the picture in screenshot pixels; leave it out and it is traced from the picture for you. base: its outline. " +
-                "loft: its silhouette in a side or front view, instead of sections; size is then [its real length across the region, its real width], round, top and bottom shape every section, and x = 0 is the middle of the region and y = 0 its bottom edge.",
+                "loft: its silhouette in a side or front view, instead of sections, giving it the true profile. With region it is in screenshot pixels, size is [its real length across the region, its real width], x = 0 is the middle of the region and y = 0 its bottom edge; " +
+                "without one, draw it yourself as [x, y] points in real units, x along its length and y up, and size[1] is how wide it is. round, top and bottom then shape every section.",
         },
         part: {
             type: "string",
