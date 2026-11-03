@@ -17,6 +17,13 @@ export const CRITERIA = {
     research: { ...COMMON, grounding: "The answer rests on the right source. 5 it read the right source, enough of it, and every claim matches it; 3 it read something relevant but goes beyond or misses what it says; 2 it did not read when it needed to, or misreports the source; 1 invented." },
     pointing: { ...COMMON, pointing: "It shows exactly where to act on the user's screen. 5 a mark sits exactly on the right control and every step is shown or said in order; 3 the mark is near but ambiguous, or a step is missing; 2 the mark misses the control; 1 no mark." },
     diagram: { ...COMMON, structure: "The diagram is right and readable. 5 every part, connection and direction matches the source, laid out so the flow reads at a glance; 3 mostly right but with a wrong or missing link, or cluttered; 1 wrong or unreadable." },
+    tutor: {
+        ...COMMON,
+        pedagogy:
+            "It checks understanding at the right moment, targets the misconception, and reveals correctly. " +
+            "5 it poses a real prediction or practice question before the punchline, waits, and if the learner is wrong it names that specific misconception and then reveals the right answer. " +
+            "3 it asks something but reveals too early, or the follow-up is generic. 1 it only explains and never checks.",
+    },
 };
 
 const SYSTEM = `You grade Ink Brain, an AI tutor that lives on top of the user's screen. It answers out loud, draws on the screen and opens panels with narrated 2D motion graphics (boards), 3D models (scenes), diagrams and live demos.
@@ -39,6 +46,7 @@ export function describeTool(tool) {
         live_annotate: () => (a.shapes ?? []).map((s) => `${s.kind}${s.text ? ` "${s.text}"` : ""}`).join(", "),
         live_read: () => a.url,
         live_look: () => (isRegion(a.region) ? "zoomed in" : "full screen"),
+        live_check: () => `check "${a.question ?? ""}" (${count(a.choices)} choices)`,
     }[tool.name];
     return `${head}${what ? `: ${what()}` : ""}${tool.failed ? ` (failed: ${tool.result})` : ""}`;
 }
@@ -57,6 +65,15 @@ function promptFor({ scenario, meta, record, metrics, reference, frames }) {
         `It said (read aloud and shown in its answer bubble): "${record.text.trim() || "(nothing)"}"`,
     ];
     if (record.captions.length) lines.push("Narrated steps:", ...record.captions.map((c, i) => `${i + 1}. "${c}"`));
+    if (record.checks?.length) {
+        lines.push(
+            "Checks of understanding (the learner's answer was scripted, including wrong ones):",
+            ...record.checks.map((check, i) => {
+                const picked = check.answer?.label ? `"${check.answer.label}" (${check.answer.correct ? "right" : "wrong"}${check.misconception ? `; misconception: ${check.misconception}` : ""})` : "no answer";
+                return `${i + 1}. Asked "${check.question}". Learner: ${picked}.`;
+            }),
+        );
+    }
     lines.push("Tools, in order:", ...(record.tools.length ? record.tools.map((tool) => `- ${describeTool(tool)}`) : ["- none"]));
     const checks = [`board text overlaps: ${metrics.boardOverlaps}, board text off the edge: ${metrics.boardOff}`, `share of the user's target hidden under Ink Brain's own bubble or panels at worst: ${metrics.targetCovered}%`, `panel headers hidden by Ink Brain's bubble or another panel: ${metrics.panelHeaderCovered}%, panels offscreen: ${metrics.panelOffscreen}%`];
     if (metrics.pointed !== undefined) checks.push(`a mark landed on the right control: ${metrics.pointed ? "yes" : "no"}`);
@@ -106,6 +123,11 @@ export function limitsFor({ scenario, record, metrics }, evidence) {
     if (!metrics.mediaMatch) limit("fit", 2, `it used ${metrics.media.join(" and ") || "nothing"} where ${scenario.expect.join(" or ")} suits`);
     if (metrics.pointed === false) limit("pointing", 2, "no mark landed on the control");
     if (scenario.category === "research" && !record.tools.some((tool) => tool.name === "live_read" && !tool.failed)) limit("grounding", 2, "it read nothing");
+    if (scenario.category === "tutor") {
+        const checks = Array.isArray(record.checks) ? record.checks : [];
+        if (!checks.length) limit("pedagogy", 2, "it never paused to check understanding");
+        else if (checks.some((check) => String(check.correctLabel ?? "").length > 8 && String(check.question ?? "").toLowerCase().includes(String(check.correctLabel).toLowerCase()))) limit("pedagogy", 3, "the question already contained the answer");
+    }
     if (record.error) for (const key of Object.keys(CRITERIA[scenario.category])) limit(key, 2, `the turn failed: ${record.error}`);
     return limits;
 }

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { judgeDisagreement, limitsFor, overall, passes } from "../evals/judge.mjs";
 import { measureLayout } from "../evals/layout.mjs";
+import { scriptedAnswer } from "../evals/learner.mjs";
 import { compareRuns, sameCodeControl } from "../evals/stats.mjs";
 import { PairJudge, pairOutcome, pairPrompt, pairSources, sourceId, summarizePairs } from "../evals/versus.mjs";
 
@@ -25,6 +26,24 @@ test("automatic checks cap fit, visuals, pointing and grounding", () => {
     const points = [{ said: "yes", shown: "no" }, { said: "yes", shown: "no" }, { said: "yes", shown: "no" }];
     assert.deepEqual(caps(limitsFor(run("pointing", { pointed: false, targetCovered: 60, mediaMatch: false, media: [] }), { points })), { fit: 2, visual: 2, pointing: 2 });
     assert.deepEqual(caps(limitsFor(run("research", {}, [{ name: "live_read", failed: true }]), { points })), { grounding: 2 });
+});
+
+test("a tutor run that never checks understanding cannot score as if it had", () => {
+    const tutor = { scenario: { category: "tutor", expect: ["board"], points: ["a"] }, record: { tools: [], checks: [], controls: false, error: null }, metrics: { boardOverlaps: 0, boardOff: 0, targetCovered: 0, mediaMatch: true, media: ["board"] } };
+    const tight = (limits, key) => Math.min(...limits.filter((limit) => limit.key === key).map((limit) => limit.max));
+    assert.equal(tight(limitsFor(tutor, { points: [{ said: "yes", shown: "yes" }] }), "pedagogy"), 2);
+    tutor.record.checks = [{ question: "What is left?", correctLabel: "the tangent", answer: { correct: false } }];
+    assert.equal(caps(limitsFor(tutor, { points: [{ said: "yes", shown: "yes" }] })).pedagogy, undefined);
+    tutor.record.checks[0].question = "It becomes the tangent, right?";
+    assert.equal(caps(limitsFor(tutor, { points: [{ said: "yes", shown: "yes" }] })).pedagogy, 3);
+});
+
+test("the scripted learner picks a wrong choice, or speaks a guess that matches none", () => {
+    const check = { choices: [{ id: "c1", label: "About 99%", correct: false, misconception: "base rate" }, { id: "c2", label: "Much lower", correct: true }] };
+    assert.equal(scriptedAnswer({ learner: [{ pick: "wrong" }] }, check, 0).id, "c1");
+    assert.equal(scriptedAnswer({ learner: [{ pick: "right" }] }, check, 0).id, "c2");
+    assert.equal(scriptedAnswer({ learner: [{ say: "it lands on zero" }] }, check, 0).via, "voice");
+    assert.equal(scriptedAnswer({ learner: [{ say: "about 99 percent" }] }, check, 0).id, "c1");
 });
 
 test("one weak criterion sinks the overall score and the pass", () => {

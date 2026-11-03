@@ -148,7 +148,7 @@ app.whenReady().then(async () => {
     const userAgent = app.userAgentFallback.replace(/ (Electron|ink-brain)\/\S+/g, "");
     app.userAgentFallback = userAgent;
     const reader = new Reader({ BrowserWindow, session, userAgent });
-    for (const scenario of SCENARIOS.filter((s) => !only || only.includes(s.id))) {
+    for (const scenario of SCENARIOS.filter((s) => !s.fixture && (!only || only.includes(s.id)))) {
         if (!force && fs.existsSync(path.join(FIXTURES, `${scenario.id}.json`))) continue;
         console.log(await capture(scenario, reader).catch((error) => `${scenario.id.padEnd(16)} FAILED: ${error.message}`));
     }

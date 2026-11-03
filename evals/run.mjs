@@ -16,6 +16,7 @@ import { boundsOfMarks, cropAround, isRegion, panelRect } from "../src/shared/ge
 import { STANDALONE_TOOLS, toToolResult } from "../src/shared/live-tools.mjs";
 import { Judge } from "./judge.mjs";
 import { measureLayout } from "./layout.mjs";
+import { recordCheck } from "./learner.mjs";
 import { printReport, summarize } from "./report.mjs";
 import { SCENARIOS } from "./scenarios.mjs";
 import { openStage, SCREEN } from "./stage.mjs";
@@ -56,15 +57,16 @@ function narrator() {
 }
 
 const overlayState = (thinking) => ({ pen: false, listening: false, thinking, speaking: false, controlling: false, stayLive: false, target: "auto", resolvedTarget: "Ink Brain" });
+const fixtureOf = (scenario) => scenario.fixture ?? scenario.id;
 
 // Plays one turn on the stage and records what the user would see and hear.
 async function play(scenario, dir, { reader, client, replay = null }) {
-    const meta = JSON.parse(fs.readFileSync(path.join(FIXTURES, `${scenario.id}.json`), "utf8"));
-    const jpeg = fs.readFileSync(path.join(FIXTURES, `${scenario.id}.jpg`));
+    const meta = JSON.parse(fs.readFileSync(path.join(FIXTURES, `${fixtureOf(scenario)}.json`), "utf8"));
+    const jpeg = fs.readFileSync(path.join(FIXTURES, `${fixtureOf(scenario)}.jpg`));
     const screen = `data:image/jpeg;base64,${jpeg.toString("base64")}`;
     const workspace = path.join(WORK, path.basename(dir));
     const roots = [path.join(os.homedir(), ".copilot", "session-state"), workspace];
-    const record = { text: "", captions: [], tools: [], frames: [], console: [], error: null, firstWords: null, firstVisual: null, writing: null, streamed: null, total: null };
+    const record = { text: "", captions: [], tools: [], frames: [], console: [], checks: [], controls: false, error: null, firstWords: null, firstVisual: null, writing: null, streamed: null, total: null };
     const stage = await openStage({ image: screen, title: meta.title, onConsole: (line) => record.console.push(line.slice(0, 400)) });
     let start = Date.now();
     const elapsed = () => Date.now() - start;
@@ -140,12 +142,24 @@ async function play(scenario, dir, { reader, client, replay = null }) {
             if (name === "live_recall") return { text: "Nothing matching was found." };
             return { text: `There is no visual "${args.id}". Use live_recall to find its id.`, failed: true };
         },
+        // Shows the question, then answers from this scenario's script. Other lanes own multi-turn; this only answers checks.
+        async askCheck(check) {
+            const shown = check.choices.map(({ id, label }) => ({ id, label }));
+            await stage.call("check", { question: check.question, choices: shown }).catch(() => {});
+            const { answer, entry } = recordCheck(scenario, check, record.checks.length);
+            record.checks.push({ ...entry, at: elapsed() });
+            if (scenario.learner) snap("check", 700);
+            if (answer?.id) await stage.call("check-pick", { id: answer.id, correct: Boolean(entry.answer?.correct) }).catch(() => {});
+            if (scenario.learner) snap("answered", 600);
+            return answer;
+        },
     });
     const explainer = new ExplainPlayer({
         surface,
         speak: narrator(),
         caption(event) {
             stage.send("live:explain", event);
+            if (event.controls) record.controls = true;
             if (event.type !== "step") return;
             record.captions.push(event.text);
             snap(`step ${event.index + 1}`, 2_200);
@@ -317,10 +331,10 @@ async function evaluatePair(scenario, attempt, pairJudge) {
     const id = attempt > 1 ? `${scenario.id}~${attempt}` : scenario.id;
     let verdict;
     try {
-        const meta = JSON.parse(fs.readFileSync(path.join(FIXTURES, `${scenario.id}.json`), "utf8"));
+        const meta = JSON.parse(fs.readFileSync(path.join(FIXTURES, `${fixtureOf(scenario)}.json`), "utf8"));
         const [left, right] = PAIR_SOURCES.map((source) => storedRun(source.label, sourceId(source, scenario.id, attempt), scenario, meta));
         if (!fs.readFileSync(left.screen).equals(fs.readFileSync(right.screen))) throw new Error(`${id} used different starting screens`);
-        const referenceFile = path.join(FIXTURES, `${scenario.id}.reference.txt`);
+        const referenceFile = path.join(FIXTURES, `${fixtureOf(scenario)}.reference.txt`);
         verdict = await pairJudge.compare({
             scenario,
             meta,
@@ -361,11 +375,11 @@ async function evaluate(scenario, attempt, { reader, client, judge }) {
         }
         fs.writeFileSync(path.join(dir, "record.json"), JSON.stringify(record, null, 1));
     }
-    const meta = JSON.parse(fs.readFileSync(path.join(FIXTURES, `${scenario.id}.json`), "utf8"));
+    const meta = JSON.parse(fs.readFileSync(path.join(FIXTURES, `${fixtureOf(scenario)}.json`), "utf8"));
     const metrics = measure(scenario, meta, record);
     let verdict = {};
     if (judge && fs.existsSync(path.join(dir, "00-screen.jpg"))) {
-        const referenceFile = path.join(FIXTURES, `${scenario.id}.reference.txt`);
+        const referenceFile = path.join(FIXTURES, `${fixtureOf(scenario)}.reference.txt`);
         const input = {
             scenario,
             meta,
