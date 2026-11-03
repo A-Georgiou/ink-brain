@@ -356,3 +356,25 @@ test("a follow-up explanation carries on with the stage it is given and says whi
     lines[1].end();
     await again;
 });
+
+test("an explanation given only a stage id plays on it from where it stopped, without building it again", async () => {
+    const { player, log, lines } = explainer();
+    const scene = { objects: [{ id: "cage", type: "box" }] };
+    const first = player.play({ scene, steps: [{ say: "One" }, { say: "Two" }] });
+    await tick();
+    for (const line of lines.slice(0, 2)) {
+        line.start();
+        line.end();
+        await tick();
+    }
+    await first;
+    log.length = 0;
+    const more = player.play({ id: "explain-1-scene", steps: [{ say: "Slower", scene: [{ do: "spin", target: "cage" }] }] });
+    await tick();
+    lines[2].start();
+    lines[2].end();
+    const result = await more;
+    assert.deepEqual(log.filter((line) => !line.startsWith("start") && !line.startsWith("end")), ["add explain-1-scene 1", "step explain-1-scene 2", "expire explain-2"]);
+    assert.doesNotMatch(result.text, /no stage/);
+    assert.match((await player.play({ id: "nope", steps: [{ say: "Hm" }] }, "x")).text, /there is no stage "nope" to carry on with/);
+});

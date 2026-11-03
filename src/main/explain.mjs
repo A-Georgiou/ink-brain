@@ -154,6 +154,7 @@ export class ExplainPlayer {
     #finished = new Set();
     #playback = new Playback();
     #cut = false;
+    #stages = new Map();
 
     // speak(text, utterance) queues narration and returns { started, ended } promises, or null with no voice.
     constructor({ surface, speak, caption, keepSeconds = 90, hush = null }) {
@@ -272,6 +273,15 @@ export class ExplainPlayer {
         return run;
     }
 
+    // Keeps the last few stages, so a later turn can carry on with one instead of building it again.
+    #remember(run) {
+        if (!run.stage) return;
+        const { id, kind, spec, offset } = run.stage;
+        this.#stages.delete(id);
+        this.#stages.set(id, { id, kind, spec, offset: offset + run.steps.length });
+        for (const old of [...this.#stages.keys()].slice(0, -4)) this.#stages.delete(old);
+    }
+
     #playable(kind, spec, steps) {
         const actions = steps.map((step) => step?.[kind]);
         return kind === "scene" ? playableSteps(spec, actions) : playableBoardSteps(spec, actions);
@@ -294,13 +304,17 @@ export class ExplainPlayer {
         const group = `explain-${run.id}`;
         // The stage is a 3D scene or a 2D board, shown in a panel and stepped along with the narration.
         const kind = scene ? "scene" : board ? "board" : null;
-        if (kind) {
+        // With an id and no new stage, it carries on with the one already on screen: the model stays and the new steps play on from where it stopped.
+        const carried = !kind && id ? this.#stages.get(cleanId(id)) : null;
+        if (carried) run.stage = { ...carried, sent: 0 };
+        else if (!kind && id) run.notes.push(`there is no stage "${cleanId(id)}" to carry on with, so this played without one; send a board or scene to build it`);
+        else if (kind) {
             const spec = scene ?? board;
             const playable = this.#playable(kind, spec, run.steps);
             const placement = { x: spec.x, y: spec.y, width: spec.width, height: spec.height, over: spec.over };
             const shown = playable.problem ? { failed: true, text: playable.problem } : await this.surface[kind]({ id: cleanId(id) || `${group}-${kind}`, title: String(title ?? ""), ...placement, [kind]: spec }, playable.steps);
             if (shown.failed) return { text: `Nothing was explained, fix the ${kind} first: ${shown.text}`, failed: true };
-            run.stage = { id: shown.id, kind, spec, sent: playable.steps.length };
+            run.stage = { id: shown.id, kind, spec, offset: 0, sent: playable.steps.length };
             run.notes.push(...playable.dropped);
             if (scene && board) run.notes.push("the board was left out because a scene was given; use one stage per explanation");
         }
@@ -331,7 +345,7 @@ export class ExplainPlayer {
                     const shown = await this.surface.execute("live_panel", step.panel);
                     if (shown.failed) run.notes.push(`step ${index + 1} panel: ${shown.text}`);
                 }
-                if (run.stage) await (again ? this.surface.sceneGoto?.(run.stage.id, index) : this.surface.sceneStep(run.stage.id, index));
+                if (run.stage) await (again ? this.surface.sceneGoto?.(run.stage.id, run.stage.offset + index) : this.surface.sceneStep(run.stage.id, run.stage.offset + index));
                 again = false;
                 this.caption({ type: "step", index, total: run.steps.length, text });
                 const said = line ? Promise.race([line.ended, sleep(readingTime(text) * 3 + 15_000)]) : Promise.all([sleep(readingTime(text)), sleep(drawing.duration)]);
@@ -353,6 +367,7 @@ export class ExplainPlayer {
         } finally {
             this.caption({ type: "end", stopped: Boolean(run.stopped) });
             this.surface.expireGroup(group, this.keepSeconds).catch(() => {});
+            this.#remember(run);
         }
         const total = run.steps.length;
         const stage = run.stage ? ` Its ${run.stage.kind} is the panel "${run.stage.id}": to carry on, pass that id to live_explain so the next steps play on it instead of opening another.` : "";
