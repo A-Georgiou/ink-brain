@@ -610,6 +610,20 @@ export async function renderScene(spec, { root, makeLabel, inPlace = false, reso
     };
     const corners = (b) => [b.min.x, b.max.x].flatMap((x) => [b.min.y, b.max.y].flatMap((y) => [b.min.z, b.max.z].map((z) => new THREE.Vector3(x, y, z))));
     const union = (boxes) => boxes.reduce((box, part) => box.union(part), new THREE.Box3());
+    // A close-up grows out to the whole of any part it would otherwise cut through, by no more than half again.
+    const settle = (view, parts) => {
+        const room = view.getSize(new THREE.Vector3()).length() * 1.45;
+        for (let pass = 0; pass < 2; pass++) {
+            const grown = view.clone();
+            for (const box of parts) {
+                if (!box.intersectsBox(view) || view.containsBox(box)) continue;
+                if (view.clone().union(box).getSize(new THREE.Vector3()).length() <= room) grown.union(box);
+            }
+            if (grown.equals(view)) break;
+            view = grown;
+        }
+        return view;
+    };
     // The parts that set the frame: small fragments far from the rest do not shrink the model.
     const robust = (boxes) => {
         if (boxes.length < 5) return boxes;
@@ -732,15 +746,16 @@ export async function renderScene(spec, { root, makeLabel, inPlace = false, reso
         const ids = new Set(actions.filter((a) => a && a.do !== "hide").flatMap((a) => [...actedIds(a), a.along]).filter((id) => typeof id === "string"));
         const boxes = [...ids].map((id) => items.get(id) ?? items.get(id.split("#")[0])).filter(Boolean).map((item) => reach(item, actions)).filter((b) => !b.isEmpty());
         for (const a of actions) for (const p of [a?.from, a?.to, ...(Array.isArray(a?.via) ? a.via : [])]) if (a?.do === "flow" && isPoint(p)) boxes.push(new THREE.Box3().setFromCenterAndSize(v3(p), new THREE.Vector3()));
-        const model = union(robust(partBoxes(true)));
+        const shown = robust(partBoxes(true));
+        const model = union(shown);
         if (!boxes.length || model.isEmpty()) return;
         const part = union(boxes);
         // Driven mechanisms sweep further than their parts are now.
         if (actions.some((x) => x?.do === "drive")) part.expandByVector(part.getSize(new THREE.Vector3()).multiplyScalar(0.25));
         const [size, whole] = [part.getSize(new THREE.Vector3()), model.getSize(new THREE.Vector3())];
-        if (size.length() > whole.length() * 0.7) return frameTo(robust(partBoxes(true)));
+        if (size.length() > whole.length() * 0.7) return frameTo(shown);
         const keep = new THREE.Vector3(Math.max(size.x, whole.x * 0.4), Math.max(size.y, whole.y * 0.4), Math.max(size.z, whole.z * 0.4));
-        frameTo([new THREE.Box3().setFromCenterAndSize(part.getCenter(new THREE.Vector3()), keep)]);
+        frameTo([settle(new THREE.Box3().setFromCenterAndSize(part.getCenter(new THREE.Vector3()), keep), shown)]);
     };
 
     function show(item, duration, delay) {
