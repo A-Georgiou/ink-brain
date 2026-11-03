@@ -135,22 +135,22 @@ export function overlapArea(box, rects) {
     return total;
 }
 
-// The biggest stage near what the user circled that may clip a corner of it (5% at most) but never its middle or other panels.
-export function stageSpot({ target, view, max, min, others = [], top = 52, margin = 24, step = 16 }) {
+// The biggest stage near the target; defaults allow only a small corner and keep its centre clear.
+export function stageSpot({ target, view, max, min, others = [], top = 52, margin = 24, step = 16, targetCover = 0.05, middleCover = 0, aspects = [[0.75, 1], [0.62, 1], [0.9, 1], [1.1, 0.9], [1.35, 0.8]] }) {
     const t = { x: target.x, y: target.y, w: target.w ?? target.width, h: target.h ?? target.height };
     const middle = { x: t.x + t.w / 4, y: t.y + t.h / 4, w: t.w / 2, h: t.h / 2 };
     const bottom = view.height - 16;
     let best = null;
     for (let w = max[0]; w >= min[0]; w -= 40) {
         // Wide stages suit most models; tall ones only when nothing wider fits.
-        for (const [aspect, weight] of [[0.75, 1], [0.62, 1], [0.9, 1], [1.1, 0.9], [1.35, 0.8]]) {
+        for (const [aspect, weight] of aspects) {
             const h = Math.round(Math.min(max[1], Math.max(min[1], w * aspect)));
             const value = w * h * weight;
             if (h > bottom - top || (best && value <= best.value)) continue;
             for (let y = top; y + h <= bottom; y += step) {
                 for (let x = margin; x + w <= view.width - margin; x += step) {
                     const spot = { x, y, w, h };
-                    if (overlapArea(spot, [middle]) > 0 || overlapArea(spot, [t]) > t.w * t.h * 0.05 || overlapArea(spot, others) > w * h * 0.05) continue;
+                    if (overlapArea(spot, [middle]) > middle.w * middle.h * middleCover || overlapArea(spot, [t]) > t.w * t.h * targetCover || overlapArea(spot, others) > w * h * 0.05) continue;
                     const away = Math.hypot(x + w / 2 - t.x - t.w / 2, y + h / 2 - t.y - t.h / 2);
                     if (!best || value > best.value || (value === best.value && away < best.away)) best = { ...spot, value, away };
                 }

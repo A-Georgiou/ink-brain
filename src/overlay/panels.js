@@ -7,7 +7,7 @@ const DEFAULT_SIZE = { markdown: [440, 380], mermaid: [600, 440], three: [560, 4
 // Boards and scenes scale their content to the panel, so smaller ones become hard to read.
 const MIN_SIZE = { scene: [520, 380], board: [640, 380] };
 // A stage or note beside what the user circled takes as much of the free space as it can, from the first size down to the second.
-const ROOMY = { scene: [[920, 700], [400, 300]], board: [DEFAULT_SIZE.board, [480, 340]], markdown: [[640, 700], [280, 200]] };
+const ROOMY = { scene: [[920, 700], [400, 300]], board: [DEFAULT_SIZE.board, [640, 340]], markdown: [[640, 700], [280, 200]] };
 // What a note tries when it would cover what the user circled: roomy widths first, then narrow ones, then a roomy one that clips a corner of it.
 const NOTE_TRIES = [
     { widths: [640, 560, 480, 420], allow: 0.05 },
@@ -359,7 +359,7 @@ export class Panels {
         const margin = 16;
         const [defaultWidth, defaultHeight] = DEFAULT_SIZE[kind];
         const min = MIN_SIZE[kind] ?? [240, 160];
-        const keepSize = !isNew && kind === "scene" && panel.frameKind === kind && panel.frame && !panel.frameFrameless;
+        const keepSize = !isNew && ["scene", "board"].includes(kind) && panel.frameKind === kind && panel.frame && !panel.frameFrameless;
         const width = clamp(rect.width ?? (isNew ? defaultWidth : parseFloat(el.style.width) || el.offsetWidth), keepSize && !Number.isFinite(rect.width) ? 1 : min[0], innerWidth - margin * 2);
         const height = clamp(rect.height ?? (isNew ? defaultHeight : parseFloat(el.style.height) || el.offsetHeight), keepSize && !Number.isFinite(rect.height) ? 1 : min[1], innerHeight - margin * 2);
         const placeSelf = !Number.isFinite(rect.x) || !Number.isFinite(rect.y);
@@ -368,7 +368,9 @@ export class Panels {
         const target = isNew && placeSelf && most && !Number.isFinite(rect.width) && !Number.isFinite(rect.height) ? this.target() : null;
         const others = [...this.#panels.values()].filter((p) => p !== panel && p.el.isConnected && !p.el.classList.contains("away")).map((p) => asRect(p.el.getBoundingClientRect()));
         if (kind === "markdown") others.push(...this.avoid().filter((r) => r && r !== target).map(asRect));
-        const roomy = target && stageSpot({ target: asRect(target), view: { width: innerWidth, height: innerHeight }, max: most, min: least, others });
+        const boardSpace = { aspects: [[0.75, 1], [0.62, 1], [0.5, 0.9], [0.9, 1], [1.1, 0.9]] };
+        const options = target && { target: asRect(target), view: { width: innerWidth, height: innerHeight }, max: most, min: least, others, ...(kind === "board" ? boardSpace : {}) };
+        const roomy = options && (stageSpot(options) ?? (kind === "board" ? stageSpot({ ...options, targetCover: 0.1, middleCover: 0.08 }) ?? stageSpot({ ...options, targetCover: 0.13, middleCover: 0.08 }) : null));
         // A panel carried on from an earlier turn gets out of the way if the user has since marked something under it.
         const inTheWay = !isNew && placeSelf && panel.autoPlaced && covers(this.target(), asRect(el.getBoundingClientRect()));
         const spot = roomy || (isNew || inTheWay ? this.#place(width, height, panel, placeSelf ? null : rect, undefined, min) : { x: placeSelf ? parseFloat(el.style.left) || el.offsetLeft : rect.x, y: placeSelf ? parseFloat(el.style.top) || el.offsetTop : rect.y, w: width, h: height });
