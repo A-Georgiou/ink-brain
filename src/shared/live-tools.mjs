@@ -235,7 +235,7 @@ const SCENE_OBJECT = {
         material: { type: "string", enum: MATERIALS, description: "Surface finish; color still applies. paint is glossy painted metal (cars, appliances), chrome is polished metal, pcb is a circuit board." },
         glow: { type: "boolean" },
         wireframe: { type: "boolean" },
-        label: { type: "string", description: "A tag on the object. Once steps play it opens while a step acts on the object and otherwise rests as a dot the user can hover." },
+        label: { type: "string", description: "A short tag on this exact part (not its group or a neighbour). Once steps play it opens while a step acts on the part and otherwise rests as a dot the user can hover." },
         pivot: {
             ...vec3,
             description:
@@ -479,7 +479,7 @@ export const EXPLAIN_TOOL = {
                         clear: { type: "boolean", description: "Erase this explanation's earlier drawings before this step." },
                         panel: { type: "object", properties: PANEL_PROPERTIES, required: ["kind", "content"], description: "Optional panel to open during this step, such as a live demo." },
                         board: { type: "array", maxItems: 40, items: BOARD_ACTION, description: "Board actions that play while this step is spoken." },
-                        scene: { type: "array", maxItems: 40, items: SCENE_ACTION, description: "Scene actions that animate while this step is spoken." },
+                        scene: { type: "array", maxItems: 40, items: SCENE_ACTION, description: "Scene actions that animate while this step is spoken: make the model visibly do what the step says, and highlight or label the parts it names." },
                     },
                     required: ["say"],
                 },
