@@ -3,6 +3,7 @@ import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import path from "node:path";
 
+// Vision models to try, in order, when the account has neither the configured model nor Auto.
 const FALLBACK_MODELS = ["gpt-6.1-terra", "claude-opus-5.5", "claude-sonnet-5.5", "gpt-6.1-sol", "claude-haiku-5.5"];
 // Automatic model selection, the only choice on Copilot Free and Student.
 const AUTO = "auto";
@@ -12,11 +13,13 @@ const EFFORTS = { "gpt-6.1-terra": "medium" };
 // The configured reasoning effort, or the one the evals found best for this model; Auto rejects any effort.
 export const effortFor = (model, configured) => (model === AUTO ? undefined : (configured ?? EFFORTS[model] ?? "low"));
 
-// The wanted model if this account can use it with images, else a fallback, else Auto.
+// The wanted model if this account can use it with images, else Auto, else the best fallback it can use.
 export function chooseModel(models, wanted) {
-    const vision = models.filter((model) => model.capabilities?.supports?.vision && model.policy?.state !== "disabled").map((model) => model.id);
+    const usable = models.filter((model) => model.policy?.state !== "disabled");
+    const vision = usable.filter((model) => model.capabilities?.supports?.vision).map((model) => model.id);
     if (wanted === AUTO || vision.includes(wanted)) return wanted;
-    return FALLBACK_MODELS.find((id) => vision.includes(id)) ?? vision[0] ?? AUTO;
+    if (!vision.length || usable.some((model) => model.id === AUTO)) return AUTO;
+    return FALLBACK_MODELS.find((id) => vision.includes(id)) ?? vision[0];
 }
 
 // A Terminal script that installs Copilot CLI if it is missing, signs in and touches marker once signed in.

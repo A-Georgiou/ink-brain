@@ -14,12 +14,13 @@ import { readImageFile } from "../src/main/images.mjs";
 import { Voice } from "../src/main/voice.mjs";
 import { ArgumentStream } from "../src/shared/stream.mjs";
 
-test("the model falls back to one the account can use, and to Auto on Auto-only plans", () => {
+test("an unavailable model falls back to Auto, or to a vision model when the account has no Auto", () => {
     const model = (id, state = "enabled") => ({ id, capabilities: { supports: { vision: true } }, policy: { state } });
     const auto = { id: "auto", capabilities: { supports: {} } };
 
     assert.equal(chooseModel([model("gpt-6.1-terra"), auto], "gpt-6.1-terra"), "gpt-6.1-terra");
-    assert.equal(chooseModel([model("gpt-6.1-terra", "disabled"), model("claude-opus-5.5"), auto], "gpt-6.1-terra"), "claude-opus-5.5");
+    assert.equal(chooseModel([model("gpt-6.1-terra", "disabled"), model("claude-opus-5.5"), auto], "gpt-6.1-terra"), "auto");
+    assert.equal(chooseModel([model("gpt-6.1-terra", "disabled"), model("claude-opus-5.5")], "gpt-6.1-terra"), "claude-opus-5.5");
     assert.equal(chooseModel([auto], "gpt-6.1-terra"), "auto");
     assert.equal(chooseModel([model("gpt-6.1-terra"), auto], "auto"), "auto");
     assert.equal(effortFor("auto", "high"), undefined);
