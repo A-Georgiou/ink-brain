@@ -14,6 +14,14 @@ const compare = (left, right, metric, bootstrap) => {
         return null;
     }
 };
+const control = (runs, metric, bootstrap) => {
+    try {
+        return sameCodeControl(runs, { metric, bootstrap });
+    } catch (error) {
+        if (!error.message.startsWith("no shared scenarios")) throw error;
+        return null;
+    }
+};
 
 export function checkMeasurement(summaries) {
     if (new Set(summaries.map((summary) => summary.judge)).size > 1) throw new Error("judge models differ between arms; rejudge both before comparing");
@@ -42,7 +50,7 @@ export function integrationReport(candidate, baseline, { controls = {}, top = 3,
         categories,
         regressions: ranked.filter((row) => row.delta < 0).slice(0, top),
         improvements: ranked.reverse().filter((row) => row.delta > 0).slice(0, top),
-        nulls: Object.entries(controls).map(([label, runs]) => ({ label, score: sameCodeControl(runs, { bootstrap }), firstVisual: sameCodeControl(runs, { metric: "metrics.firstVisual", bootstrap }) })),
+        nulls: Object.entries(controls).map(([label, runs]) => ({ label, score: control(runs, "score", bootstrap), firstVisual: control(runs, "metrics.firstVisual", bootstrap) })),
         unpaired: score.perScenario.filter((row) => row.runs.includes(1)).length,
     };
 }

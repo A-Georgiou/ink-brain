@@ -124,6 +124,8 @@ test("integration decisions pair categories, latency and pass rates on the same 
     assert.match(lines.join("\n"), /first words -1\.00s \[-1\.10s, -0\.90s\]/);
     assert.match(lines.join("\n"), /first visual -1\.00s \[insufficient scenarios\] \(1 paired\)/);
     assert.match(lines.join("\n"), /Null controls.*baseline: score \+0\.00 \[\+0\.00, \+0\.00\]/s);
+    const unjudged = [result("missing", "3d", null, false, NaN), result("missing", "3d", null, false, NaN, 2)];
+    assert.equal(integrationReport(candidate, baseline, { controls: { unjudged }, bootstrap: 1 }).nulls[0].score, null);
 });
 
 test("integration reports refuse known judge or harness mismatches", () => {
