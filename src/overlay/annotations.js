@@ -212,6 +212,16 @@ export class Annotations {
         }
     }
 
+    // Cuts what is left of every fading drawing down to this many seconds, so marks from an earlier answer go soon after the next question.
+    hasten(seconds) {
+        for (const [key, item] of this.#items) {
+            const left = item.timer ? item.due - Date.now() : item.remaining;
+            if (left == null || left <= seconds * 1000) continue;
+            item.remaining = seconds * 1000;
+            this.#arm(key, item);
+        }
+    }
+
     // Shows each page's drawings only while that page is on screen, moved along with its window.
     showPages(states) {
         for (const [key, page] of this.#pages) {

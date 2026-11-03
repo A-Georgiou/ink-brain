@@ -521,6 +521,7 @@ api.on("live:turn", (event) => {
     if (event.type === "start") {
         // Every turn, however it was asked, keeps new panels off what the user marked; a follow-up without marks is still about it.
         lastAnchor = event.anchor ?? lastAnchor;
+        annotations.hasten(10);
         pages.beginTurn(event.anchor);
         bubble.start({ ...event, anchor: lastAnchor });
         dockText("");
