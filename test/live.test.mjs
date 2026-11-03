@@ -134,13 +134,15 @@ test("a streamed explanation starts once its stage and first step are written, a
 
 test("nested argument streams report whole objects at every chunk boundary without confusing escaped text or arrays", () => {
     const object = { id: "part", type: "box", label: 'A "part" } ] \\\\ end', size: [1, 2, 3], hidden: false };
-    const args = { title: "Test", scene: { camera: { target: [0, 0, 0] }, objects: [object] }, steps: [{ say: "Look", scene: [] }] };
+    const element = { id: "equation", type: "tex", tex: "\\frac{1}{2}x^2", hidden: true };
+    const args = { title: "Test", scene: { camera: { target: [0, 0, 0] }, objects: [object] }, board: { elements: [element] }, steps: [{ say: "Look", scene: [] }] };
     const text = JSON.stringify(args);
     for (let split = 0; split <= text.length; split++) {
-        const reader = new ArgumentStream("steps", { scene: "objects" });
+        const reader = new ArgumentStream("steps", { scene: "objects", board: "elements" });
         const entries = [...reader.push(text.slice(0, split)), ...reader.push(text.slice(split))];
-        assert.deepEqual(entries.filter((entry) => entry.item).map(({ key, field, json }) => [field ? `${key}.${field}` : key, JSON.parse(json)]), [["scene.objects", object], ["steps", args.steps[0]]]);
+        assert.deepEqual(entries.filter((entry) => entry.item).map(({ key, field, json }) => [field ? `${key}.${field}` : key, JSON.parse(json)]), [["scene.objects", object], ["board.elements", element], ["steps", args.steps[0]]]);
         assert.deepEqual(JSON.parse(entries.find((entry) => entry.key === "scene" && !entry.field).json), args.scene);
+        assert.deepEqual(JSON.parse(entries.find((entry) => entry.key === "board" && !entry.field).json), args.board);
     }
 });
 
@@ -175,6 +177,27 @@ test("scene previews skip bare cutters, grow before the scene closes and adopt t
     lines[0].start();
     lines[0].end();
     assert.match((await played).text, /Narrated all 1 steps/);
+});
+
+test("scene previews show shaped bodies and named components without waiting for a later label", async () => {
+    for (const shape of [
+        { type: "loft", sections: [{ at: 0, width: 1, height: 1 }, { at: 2, width: 2, height: 1 }] },
+        { type: "part", part: "usb-b" },
+        { type: "lathe", points: [[1, 0], [1.5, 1], [0.5, 2]] },
+    ]) {
+        const { player, surface } = explainer();
+        const shown = [];
+        surface.scene = async (args) => (shown.push(args), { id: args.id });
+        player.feed("profile", '{"scene":{"objects":[{"id":"cut","type":"box"},');
+        await tick();
+        assert.equal(shown.length, 0);
+        const body = { id: "body", ...shape, cut: ["cut"] };
+        player.feed("profile", JSON.stringify(body) + ",");
+        await tick();
+        assert.equal(shown.length, 1, shape.type);
+        assert.deepEqual(shown[0].scene.objects.at(-1), body);
+        player.close();
+    }
 });
 
 test("previews wait for dependencies and visible content, and cancellation clears an in-flight preview", async () => {
@@ -237,11 +260,11 @@ test("a failed preview is cleared and the complete scene still gets a normal ren
     assert.match((await played).text, /Narrated all 1 steps/);
 });
 
-test("boards wait for the first narrated step instead of opening an empty pre-narration frame", async () => {
+test("hidden boards wait for the first narrated step instead of opening an empty pre-narration frame", async () => {
     const { player, surface, lines, log } = explainer();
     let opens = 0;
     surface.board = async (args) => (++opens, { id: args.id });
-    const board = { elements: [{ id: "eq", type: "tex", tex: "x=1" }] };
+    const board = { elements: [{ id: "eq", type: "tex", tex: "x=1", hidden: true }] };
     player.feed("board", '{"title":"Equation","board":' + JSON.stringify(board) + ",");
     await tick();
     assert.equal(opens, 0);
@@ -254,6 +277,58 @@ test("boards wait for the first narrated step instead of opening an empty pre-na
     lines[0].start();
     lines[0].end();
     await played;
+});
+
+test("boards preview a useful valid prefix, keep later reveals hidden and adopt the complete stage", async () => {
+    const { player, surface, lines, log } = explainer();
+    const shown = [];
+    surface.board = async (args, steps) => (shown.push({ ...args, steps }), { id: args.id });
+    const board = { vars: { a: 2 }, elements: [
+        { id: "title", type: "text", text: "A changing slope" },
+        { id: "axes", type: "axes", x: [0, 4], y: [0, 8] },
+        { id: "curve", type: "plot", on: "axes", fn: "a*x", label: "f(x)" },
+        { id: "answer", type: "tex", tex: "f'(x)=2", hidden: true },
+    ] };
+    player.feed("board-prefix", '{"title":"Slope","board":{"vars":{"a":2},"elements":[' + board.elements.slice(0, 2).map(JSON.stringify).join(",") + ",");
+    await tick();
+    assert.equal(shown.length, 0);
+    player.feed("board-prefix", JSON.stringify(board.elements[2]) + ",");
+    await tick();
+    assert.equal(shown.length, 1);
+    assert.equal(shown[0].building, true);
+    assert.equal(shown[0].board.elements.length, 3);
+    assert.equal(lines.length, 0);
+    player.feed("board-prefix", JSON.stringify(board.elements[3]) + "]},");
+    await tick();
+    assert.equal(shown.length, 2);
+    assert.equal(shown[0].board.elements.length, 3);
+    assert.equal(shown[1].building, false);
+    assert.deepEqual(shown[1].board, board);
+    const steps = [{ say: "The slope is two", board: [{ do: "show", target: "answer" }] }];
+    player.feed("board-prefix", '"steps":' + JSON.stringify(steps) + "}");
+    await tick();
+    assert.equal(shown.length, 2);
+    assert.ok(log.includes("add explain-1-board 1"));
+    const played = player.play({ title: "Slope", board, steps }, "board-prefix");
+    lines[0].start();
+    lines[0].end();
+    assert.match((await played).text, /Narrated all 1 steps/);
+});
+
+test("board previews wait for dependencies and never open a spare panel for an explicit stage id", async () => {
+    const { player, surface } = explainer();
+    const shown = [];
+    surface.board = async (args) => (shown.push(args), { id: args.id });
+    player.feed("dependency", '{"board":{"elements":[{"id":"curve","type":"plot","on":"axes","fn":"x^2"},');
+    await tick();
+    assert.equal(shown.length, 0);
+    player.feed("dependency", '{"id":"axes","type":"axes"}');
+    await tick();
+    assert.equal(shown.length, 1);
+    player.feed("replace", '{"id":"existing","board":{"elements":[{"id":"eq","type":"tex","tex":"x=2"}]},');
+    await tick();
+    assert.equal(shown.length, 1);
+    player.close();
 });
 
 test("starting an explanation does not discard another call still writing its scene", async () => {

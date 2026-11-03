@@ -3,7 +3,7 @@
 import { playableBoardSteps } from "../shared/board.mjs";
 import { playableSteps } from "../shared/scene.mjs";
 import { ArgumentStream } from "../shared/stream.mjs";
-import { ScenePreview } from "./preview.mjs";
+import { StagePreview } from "./preview.mjs";
 import { cleanId } from "./surface.mjs";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms).unref?.());
@@ -236,7 +236,7 @@ export class ExplainPlayer {
     feed(callId, chunk) {
         if (this.#finished.has(callId)) return false;
         let stream = this.#streams.get(callId);
-        if (!stream) this.#streams.set(callId, (stream = { reader: new ArgumentStream("steps", { scene: "objects" }), head: {}, steps: [], run: null }));
+        if (!stream) this.#streams.set(callId, (stream = { reader: new ArgumentStream("steps", { scene: "objects", board: "elements" }), head: {}, steps: [], run: null }));
         if (stream.broken || stream.cancelled) return false;
         let changed = null;
         let complete = false;
@@ -265,9 +265,9 @@ export class ExplainPlayer {
             return false;
         }
         if (!spoken(stream.steps[0])) {
-            if (changed === "scene") {
-                stream.preview ??= new ScenePreview(++this.#count, this.surface);
-                stream.preview.offer(stream.head.scene, String(stream.head.title ?? ""), complete);
+            if (changed === "scene" || (changed === "board" && !cleanId(stream.head.id) && !stream.head.scene)) {
+                stream.preview ??= new StagePreview(++this.#count, this.surface, changed);
+                stream.preview.offer(stream.head[changed], String(stream.head.title ?? ""), complete);
             }
             return false;
         }
