@@ -6,7 +6,7 @@ import { BOARD_MARGIN, circleRadius, clearNodeSpot, clearSpot, katexOptions, lab
 const [W, H, UNIT] = [1600, 900, 100];
 const NS = "http://www.w3.org/2000/svg";
 // Manim's palette, so colours named by the model look right on the dark board.
-const NAMED = { blue: "#58C4DD", teal: "#5CD0B3", green: "#83C167", yellow: "#FFE45E", gold: "#F0AC5F", orange: "#FF862F", red: "#FC6255", maroon: "#C55F73", purple: "#9A72AC", pink: "#D147BD", grey: "#A6B0BE", gray: "#A6B0BE", white: "#ECECEC" };
+const NAMED = { blue: "#58C4DD", teal: "#2EE6A8", green: "#83C167", yellow: "#FFE45E", gold: "#F0AC5F", orange: "#FF862F", red: "#FC6255", maroon: "#C55F73", purple: "#9A72AC", pink: "#D147BD", grey: "#A6B0BE", gray: "#A6B0BE", white: "#ECECEC" };
 const CYCLE = ["#58C4DD", "#FFE45E", "#83C167", "#FC6255", "#9A72AC", "#F0AC5F"];
 const TIME = { show: 1, hide: 0.6, move: 1, transform: 1.4, color: 0.6, highlight: 1, surround: 0.8, opacity: 0.6, set: 1.6, apply: 2, camera: 1.2 };
 const TEXT_TYPES = new Set(["tex", "text"]);
@@ -216,7 +216,7 @@ function build(spec, world, katex) {
         if (!node) {
             node = item.labels[key] = element("div", "board-tex", layer);
             node.dataset.boardId = item.def.id;
-            node.style.fontSize = `${Math.max(0.42, num(item.def.size, 0.45)) * UNIT}px`;
+            node.style.fontSize = `${Math.max(0.46, num(item.def.size, 0.48)) * UNIT}px`;
             node.style.color = item.textColor ?? item.color;
             item.nodes.push(node);
             watchText(item, node);
@@ -226,17 +226,19 @@ function build(spec, world, katex) {
         Object.assign(node.style, { left: `${x}px`, top: `${y}px` });
         node.dataset.anchor = anchor;
     };
+    const texSize = (_item, source, size) => Math.max(/\\frac\b/.test(source) ? 0.58 : 0.48, size);
     const textNode = (item, source, tex, size) => {
         const wrap = item.def.width && item.def.type === "text";
         const node = element("div", tex ? "board-tex" : `board-text${item.def.font === "sans" ? " sans" : ""}`, layer);
         node.dataset.boardId = item.def.id;
-        const minSize = tex ? 0.45 : ["box", "circle"].includes(item.def.type) ? 0.36 : 0.38;
-        const pxSize = Math.max(minSize, size) * UNIT;
+        const sideNote = item.def.type === "text" && isPair(item.def.at) && Math.abs(Number(item.def.at[0])) > 4.5;
+        const minSize = ["box", "circle"].includes(item.def.type) ? 0.36 : sideNote ? 0.32 : 0.38;
+        const pxSize = (tex ? texSize(item, source, size) : Math.max(minSize, size)) * UNIT;
         node.style.fontSize = `${pxSize}px`;
         (tex ? setTex : setText)(node, source);
         if (wrap) {
             const maxW = item.def.width * UNIT;
-            if (node.offsetWidth > maxW && node.offsetWidth <= maxW * 1.28) {
+            if (node.offsetWidth > maxW && node.offsetWidth <= maxW * 1.15) {
                 node.style.fontSize = `${pxSize * (maxW / node.offsetWidth)}px`;
             } else if (node.offsetWidth > maxW) {
                 node.classList.add("wrap");
@@ -250,7 +252,9 @@ function build(spec, world, katex) {
     };
     // Text too wide for the board is set smaller so that it fits.
     const fitWidth = (item, node) => {
-        const room = W - 2 * BOARD_MARGIN - (item.def.type === "box" ? 56 : 0);
+        const ax = isPair(item.def.at) && typeof item.def.at[0] === "number" && !item.def.on ? px(item.def.at)[0] : W / 2;
+        const sideRoom = ax > W * 0.58 ? (W - ax - 36) * 2 : W - 2 * BOARD_MARGIN;
+        const room = Math.min(W - 2 * BOARD_MARGIN - (item.def.type === "box" ? 56 : 0), Math.max(520, sideRoom));
         if (node.offsetWidth > room) node.style.fontSize = `${parseFloat(node.style.fontSize) * Math.max(0.5, room / node.offsetWidth)}px`;
     };
     // A box is never smaller than its text, and shrinks its text to fit when an explicit width is given.
@@ -260,11 +264,12 @@ function build(spec, world, katex) {
         const [sx, sy] = axes ? axes.scale : [UNIT, UNIT];
         const givenW = item.def.width !== undefined ? Math.abs(value(item.def.width)) * sx : 0;
         const givenH = item.def.height !== undefined ? Math.abs(value(item.def.height)) * sy : 0;
-        if (item.node && givenW > 24 && (axes || givenW < 140) && item.node.offsetWidth > givenW - 16) {
-            item.node.style.fontSize = `${parseFloat(item.node.style.fontSize) * Math.max(0.45, (givenW - 16) / item.node.offsetWidth)}px`;
-        }
-        const padX = axes || (givenW > 0 && givenW < 140) ? 16 : 36;
+        const padX = axes || (givenW > 0 && givenW < 140) ? 16 : 32;
         const padY = axes || (givenH > 0 && givenH < 90) ? 14 : 24;
+        if (item.node && givenW > 24 && item.node.offsetWidth + padX > givenW * (axes || givenW < 140 ? 1 : 1.12)) {
+            const targetW = givenW * (axes || givenW < 140 ? 1 : 1.12) - padX;
+            item.node.style.fontSize = `${parseFloat(item.node.style.fontSize) * Math.max(axes || givenW < 140 ? 0.45 : 0.72, targetW / item.node.offsetWidth)}px`;
+        }
         const w = givenW > 0 ? Math.max(givenW, item.node ? item.node.offsetWidth + padX : 20) : Math.max(0, item.node ? item.node.offsetWidth + 56 : 240);
         const h = givenH > 0 ? Math.max(givenH, item.node ? item.node.offsetHeight + padY : 20) : Math.max(0, item.node ? item.node.offsetHeight + 40 : 110);
         const attrs = { x: cx - w / 2, y: cy - h / 2, width: w, height: h, rx: axes ? Math.min(8, w / 6, h / 6) : Math.min(18, h / 4) };
@@ -1117,7 +1122,7 @@ function build(spec, world, katex) {
         const fresh = element("div", old.className, layer);
         fresh.dataset.boardId = item.def.id;
         const baseSize = ["box", "circle"].includes(item.def.type) ? 0.48 : 0.6;
-        Object.assign(fresh.style, { left: old.style.left, top: old.style.top, color: old.style.color, fontSize: `${Math.max(0.45, num(item.def.size, baseSize)) * UNIT}px` });
+        Object.assign(fresh.style, { left: old.style.left, top: old.style.top, color: old.style.color, fontSize: `${texSize(item, source, num(item.def.size, baseSize)) * UNIT}px` });
         if (old.dataset.anchor !== undefined) fresh.dataset.anchor = old.dataset.anchor;
         setTex(fresh, source);
         fitWidth(item, fresh);
@@ -1229,6 +1234,11 @@ function build(spec, world, katex) {
                     leaves.forEach((leaf, i) => (leaf.style.opacity = k < 1 ? clamp01((u * (leaves.length + 3) - i) / 3.5) : ""));
                 }
             }, finish);
+            return;
+        }
+        if (["arrow", "line", "vector", "dot", "tangent", "brace"].includes(item.def.type)) {
+            item.def.label = to;
+            item.draw?.();
             return;
         }
         if (["plot", "area"].includes(item.def.type)) {
