@@ -43,14 +43,16 @@ export function compareRuns(left, right, { metric = "score", bootstrap = 6000, s
     const pairs = ids.map((id) => ({ id, category: L.get(id).category, left: L.get(id).values, right: R.get(id).values }));
     const scenarioMeans = pairs.map(({ left: a, right: b }) => [mean(a), mean(b)]);
     const deltas = scenarioMeans.map(([a, b]) => a - b);
+    const meanSE = [se(scenarioMeans.map(([a]) => a)), se(scenarioMeans.map(([, b]) => b))];
     const result = {
         metric,
         scenarios: pairs.length,
         runs: [pairs.reduce((n, p) => n + p.left.length, 0), pairs.reduce((n, p) => n + p.right.length, 0)],
         means: [mean(scenarioMeans.map(([a]) => a)), mean(scenarioMeans.map(([, b]) => b))],
+        meanSE,
         delta: mean(deltas),
         pairedSE: se(deltas),
-        unpairedSE: pairs.length < 2 ? null : Math.hypot(se(scenarioMeans.map(([a]) => a)), se(scenarioMeans.map(([, b]) => b))),
+        unpairedSE: pairs.length < 2 ? null : Math.hypot(...meanSE),
         wins: deltas.filter((d) => d > 0).length,
         ties: deltas.filter((d) => d === 0).length,
         losses: deltas.filter((d) => d < 0).length,
@@ -98,7 +100,7 @@ export function sameCodeControl(runs, options) {
 function printComparison(name, a, b, options) {
     const r = compareRuns(a, b, options);
     const bounds = r.interval ? `[${signed(r.interval[0])}, ${signed(r.interval[1])}]` : "-";
-    console.log(`${name}: ${r.scenarios} shared scenarios, ${r.runs.join("/")} runs, ${r.means.map(fixed).join(" vs ")}, delta ${signed(r.delta)} +/- ${fixed(r.pairedSE)} SE, 95% CI ${bounds}, ${r.wins}/${r.ties}/${r.losses} wins/ties/losses`);
+    console.log(`${name}: ${r.scenarios} shared scenarios, ${r.runs.join("/")} runs, ${r.means.map((value, i) => `${fixed(value)} +/- ${fixed(r.meanSE[i])}`).join(" vs ")}, delta ${signed(r.delta)} +/- ${fixed(r.pairedSE)} SE, 95% CI ${bounds}, ${r.wins}/${r.ties}/${r.losses} wins/ties/losses`);
     return r;
 }
 

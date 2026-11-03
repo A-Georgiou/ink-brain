@@ -45,6 +45,7 @@ test("scenario pairing removes common difficulty without treating repeats as ind
     assert.equal(result.delta, 1);
     assert.deepEqual(result.interval, [1, 1]);
     assert.equal(result.pairedSE, 0);
+    assert.deepEqual(result.meanSE, [1, 1]);
     assert.ok(result.unpairedSE > 0);
 });
 
