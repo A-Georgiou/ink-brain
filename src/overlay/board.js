@@ -1369,6 +1369,7 @@ export async function renderBoard(spec, { root }) {
     const katex = await loadKatex();
     let inset = spec.autoplay === false ? 116 : 0;
     let envelope = null;
+    let refitPreview = false;
     let board = null;
     const stage = element("div", "board", root);
     const world = element("div", "board-world", stage);
@@ -1418,7 +1419,14 @@ export async function renderBoard(spec, { root }) {
     let raf = 0;
     const loop = () => {
         raf = requestAnimationFrame(loop);
-        if (board.frame(performance.now() / 1000)) updateEnvelope();
+        const changed = board.frame(performance.now() / 1000);
+        const status = refitPreview && board.status();
+        // Forget the preview's temporary bounds once its first narrated view has settled.
+        if (status && status.index >= 0 && status.settled) {
+            envelope = null;
+            refitPreview = false;
+        }
+        if (changed || !envelope) updateEnvelope();
     };
     loop();
     const resize = new ResizeObserver(fit);
@@ -1432,7 +1440,10 @@ export async function renderBoard(spec, { root }) {
             board = build(spec, world, katex);
             if (Number.isInteger(index) && index >= 0) board.step(index);
         },
-        addSteps: (more) => board.addSteps(more),
+        addSteps(more) {
+            refitPreview ||= !steps.length && board.status().index < 0 && more.length > 0;
+            board.addSteps(more);
+        },
         setInset(px) {
             const h = root.clientHeight || innerHeight;
             const next = Math.max(inset, Math.min(Math.round(num(px, 0)), h * 0.55));
