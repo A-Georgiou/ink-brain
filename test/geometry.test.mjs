@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import katex from "katex";
 import { anchorAt, pageState, pageTitle } from "../src/shared/anchors.mjs";
-import { clearSpot, validateBoard, withValues } from "../src/shared/board.mjs";
+import { circleRadius, clearNodeSpot, clearSpot, diagramFrame, labelTex, linkBend, linkLabelGap, linkLabelSide, loopAround, placeLinkLabel, routeBend, routeDiagramLink, sequenceLink, validateBoard, withValues } from "../src/shared/board.mjs";
 import { inkGrid, inkIn, settleMarks } from "../src/shared/calm.mjs";
 import { compile } from "../src/shared/mathexpr.mjs";
 import { PART_KINDS, validateScene } from "../src/shared/scene.mjs";
@@ -176,6 +177,88 @@ test("board text steps the shortest way off earlier text, back onto the board, a
     assert.deepEqual(clearSpot({ x: 560, y: 320, w: 200, h: 40 }, [{ ...eq, frame: true }], 1600, 900), [0, 0]);
 });
 
+test("connected diagram nodes leave enough room for an arrow without moving unrelated or nested nodes", () => {
+    const first = { id: "client", x: 100, y: 100, w: 300, h: 100, frame: true };
+    const second = { id: "resolver", x: 405, y: 100, w: 300, h: 100, frame: true };
+    const [dx, dy] = clearNodeSpot(second, [first], new Set(["client"]), 1600, 900);
+    assert.ok(dx >= 69 || Math.abs(dy) >= 169);
+    assert.deepEqual(clearNodeSpot(second, [first], new Set(), 1600, 900), [0, 0]);
+    assert.deepEqual(clearNodeSpot({ id: "child", x: 150, y: 120, w: 80, h: 40 }, [first], new Set(["client"]), 1600, 900), [0, 0]);
+});
+
+test("opposite diagram links separate without overriding an explicit bend", () => {
+    const forward = { type: "arrow", from: "client", to: "server" };
+    const reverse = { type: "arrow", from: "server", to: "client", bend: -0.5 };
+    assert.equal(linkBend(forward, [forward, reverse]), -0.45);
+    assert.equal(linkBend(reverse, [forward, reverse]), -0.5);
+    assert.equal(linkBend(forward, [forward]), 0);
+    assert.equal(linkBend({ ...forward, from: [0, 0] }, [reverse]), 0);
+});
+
+test("diagram labels clear diagonal links and self-transitions loop around their node", () => {
+    const normal = [Math.SQRT1_2, Math.SQRT1_2];
+    assert.ok(linkLabelGap(normal, 80, 40) > ((80 + 40) * Math.SQRT1_2) / 2);
+    assert.equal(linkLabelGap(normal, 400, 40), 60);
+    assert.equal(sequenceLink([0, 0], [960, 50]), true);
+    assert.equal(sequenceLink([0, 0], [280, 270]), false);
+    assert.ok(linkLabelSide([0, 1], 0, true) < 0);
+    assert.ok(linkLabelSide([0, -1], 0, true) > 0);
+    assert.equal(routeDiagramLink({ type: "line", from: [0, 0], to: [0, 5] }, false), false);
+    assert.equal(routeDiagramLink({ type: "line", from: "a", to: "b" }, false), true);
+    assert.equal(routeDiagramLink({ type: "arrow", from: [0, 0], to: [5, 0] }, true), false);
+    const box = { x: 400, y: 300, w: 200, h: 100 };
+    const above = loopAround(box);
+    assert.ok(above.from[0] < above.to[0] && above.control1[1] < box.y && above.control2[1] < box.y);
+    const below = loopAround({ ...box, y: 20 });
+    assert.equal(below.side, 1);
+    assert.ok(below.control1[1] > 120 && below.control2[1] > 120);
+});
+
+test("diagram links curve around intervening labels without moving a clear or attached link", () => {
+    const from = [0, 50];
+    const to = [200, 50];
+    const label = { x: 90, y: 25, w: 20, h: 50 };
+    const bend = routeBend(from, to, 0, [label]);
+    assert.ok(50 + bend * 50 < label.y - 2 || 50 + bend * 50 > label.y + label.h + 2);
+    assert.equal(routeBend(from, to, 0.5, []), 0.5);
+    assert.equal(routeBend(from, to, 0, [{ x: -10, y: 30, w: 20, h: 40 }]), 0);
+    const node = { ...label, node: true };
+    const crowded = [node, { x: 80, y: -10, w: 40, h: 30 }, { x: 80, y: 80, w: 40, h: 30 }];
+    const detour = routeBend(from, to, 0, crowded);
+    assert.ok(50 + detour * 50 < node.y - 2 || 50 + detour * 50 > node.y + node.h + 2);
+});
+
+test("connection labels choose a clear point beside their own path", () => {
+    const node = { x: 400, y: 230, w: 200, h: 80, node: true };
+    const [x, y] = placeLinkLabel({ a: [100, 200], b: [900, 200], control: [500, 200], width: 160, height: 40, side: 1, obstacles: [node] });
+    const label = { x: x - 80, y: y - 20, w: 160, h: 40 };
+    assert.equal(overlapArea(label, [node]), 0);
+    assert.ok(y + 20 < 198 || y - 20 > 202);
+    assert.ok(x >= 180 && x <= 820);
+});
+
+test("diagram labels retain spaces without changing mathematical notation", () => {
+    const rendered = katex.renderToString(labelTex("permission request"), { output: "html" }).replace(/<[^>]+>/g, "");
+    assert.match(rendered, /permission\u00a0request/);
+    assert.match(katex.renderToString(labelTex("SYN seq = 100"), { output: "html" }).replace(/<[^>]+>/g, ""), /SYN\u00a0seq\u00a0=\u00a0100/);
+    assert.equal(labelTex("sin x"), "sin x");
+    assert.equal(labelTex("x = 2"), "x = 2");
+    assert.equal(labelTex("\\alpha + \\beta"), "\\alpha + \\beta");
+});
+
+test("state labels fit their circles and compact diagrams fill the stage without clipping", () => {
+    assert.ok(circleRadius(50, 180, 40) > Math.hypot(90, 20));
+    assert.equal(circleRadius(150, 100, 40), 150);
+    const bounds = { x: 500, y: 250, w: 600, h: 350 };
+    const view = diagramFrame(bounds);
+    assert.ok(view.z > 1);
+    assert.ok(800 + (bounds.x - view.x) * view.z >= 80);
+    assert.ok(450 + (bounds.y + bounds.h - view.y) * view.z <= 820);
+    assert.equal(diagramFrame({ x: 0, y: 0, w: 1600, h: 900 }).z, 1);
+    const board = { elements: [{ id: "locked", type: "circle", text: "Locked" }, { id: "push", type: "arrow", from: "locked", to: "locked" }] };
+    assert.equal(validateBoard(board, [[{ do: "flow", target: "push" }]]), null);
+});
+
 test("marks snap onto the control under them, and only when it plausibly is what they meant", () => {
     const button = [
         { role: "AXStaticText", x: 205, y: 229, w: 30, h: 16 },
@@ -245,6 +328,15 @@ test("notes go off what the user circled onto the quietest ground, and none fits
     assert.ok(crowds({ x: 24, y: 52, w: 600, h: 549 }, target));
     assert.ok(!crowds(spot, target, [{ x: 0, y: 0, w: 100, h: 100 }]));
     assert.equal(noteSpot({ target: { x: 0, y: 0, w: 1512, h: 982 }, view, sizes }), null);
+});
+
+test("diagram stages stay readable while limiting coverage of a large selection", () => {
+    const target = { x: 190, y: 254, w: 1100, h: 574 };
+    const middle = { x: 465, y: 397.5, w: 550, h: 287 };
+    const spot = stageSpot({ target, view: { width: 1512, height: 982 }, max: [760, 520], min: [640, 340], targetCover: 0.13, middleCover: 0.08, aspects: [[0.75, 1], [0.62, 1], [0.5, 0.9], [0.9, 1], [1.1, 0.9]] });
+    assert.ok(spot.w >= 640 && spot.h >= 340);
+    assert.ok(overlapArea(spot, [target]) <= target.w * target.h * 0.13);
+    assert.ok(overlapArea(spot, [middle]) <= middle.w * middle.h * 0.08);
 });
 
 test("scene mechanisms must move real parts, and steps drive only mechanisms", () => {

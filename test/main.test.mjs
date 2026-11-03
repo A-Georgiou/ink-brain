@@ -378,6 +378,10 @@ test("a board's equations are typeset before it is shown, so TeX mistakes go str
     assert.equal(broken.failed, true);
     assert.match(broken.text, /The board was not shown: tex of eq: /);
     assert.equal(calls.length, 0);
+    const state = await surface.execute("live_panel", { kind: "board", board: { elements: [{ id: "state", type: "circle", tex: "x" }], steps: [[{ do: "transform", target: "state", to: "\\frac{1}{" }]] } });
+    assert.equal(state.failed, true);
+    assert.match(state.text, /tex of transform of state/);
+    assert.equal(calls.length, 0);
     const steps = [[{ do: "transform", target: "eq", to: "\\part{a}{x} = \\val{a}" }]];
     await surface.execute("live_panel", { kind: "board", board: { vars: { a: 2 }, elements: [{ id: "eq", type: "tex", tex: "x = 2" }], steps } });
     assert.equal(calls[0].params.kind, "board");
