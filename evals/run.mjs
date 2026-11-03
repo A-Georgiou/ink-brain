@@ -108,15 +108,14 @@ async function play(scenario, dir, { reader, client, replay = null, grid }) {
         return (png ? image.toPNG() : image.toJPEG(90)).toString("base64");
     };
 
-    // Count a visual only once the overlay confirms it rendered, and show judges the early streaming view.
+    // Count a visual only once the overlay confirms it rendered, and show judges the early view once its panel has finished opening.
     const overlayCall = async (method, params, timeoutMs) => {
         const result = await stage.call(method, params, timeoutMs);
         if (VISUAL_CALLS.has(method) && result?.ok !== false && result?.note !== "still rendering") {
             turn.firstVisual ??= elapsed();
             if (record.firstVisual == null) {
                 record.firstVisual = elapsed();
-                snap("first visual", 120);
-                snap("early visual", 4_000);
+                snap("first visual", 2_000);
             }
         }
         return result;
