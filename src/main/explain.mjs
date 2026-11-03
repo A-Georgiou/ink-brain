@@ -3,6 +3,7 @@
 import { playableBoardSteps } from "../shared/board.mjs";
 import { playableSteps } from "../shared/scene.mjs";
 import { ArgumentStream } from "../shared/stream.mjs";
+import { cleanId } from "./surface.mjs";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms).unref?.());
 const MAX_STEPS = 12;
@@ -217,7 +218,7 @@ export class ExplainPlayer {
         try {
             for (const { key, json, item } of stream.reader.push(chunk)) {
                 if (item) stream.steps.push(objectOf(json));
-                else if (key === "title") stream.head.title = JSON.parse(json);
+                else if (key === "title" || key === "id") stream.head[key] = JSON.parse(json);
                 else if (key === "scene" || key === "board") stream.head[key] = objectOf(json);
             }
         } catch {
@@ -241,7 +242,7 @@ export class ExplainPlayer {
     }
 
     // Plays a finished live_explain call; one already playing from its streamed arguments carries on with them.
-    async play({ title, steps, scene, board }, callId) {
+    async play({ title, steps, scene, board, id }, callId) {
         const run = this.#streams.get(callId)?.run;
         this.#streams.delete(callId);
         if (callId) this.#finished.add(callId);
@@ -253,7 +254,7 @@ export class ExplainPlayer {
         }
         const problem = validateSteps(steps);
         if (problem) return { text: `Nothing was explained: ${problem}.`, failed: true };
-        const fresh = this.#begin({ title, scene, board }, steps);
+        const fresh = this.#begin({ title, scene, board, id }, steps);
         fresh.end();
         return fresh.done;
     }
@@ -289,7 +290,7 @@ export class ExplainPlayer {
         run.notes.push(...added.problems);
     }
 
-    async #perform(run, { title, scene, board }) {
+    async #perform(run, { title, scene, board, id }) {
         const group = `explain-${run.id}`;
         // The stage is a 3D scene or a 2D board, shown in a panel and stepped along with the narration.
         const kind = scene ? "scene" : board ? "board" : null;
@@ -297,7 +298,7 @@ export class ExplainPlayer {
             const spec = scene ?? board;
             const playable = this.#playable(kind, spec, run.steps);
             const placement = { x: spec.x, y: spec.y, width: spec.width, height: spec.height, over: spec.over };
-            const shown = playable.problem ? { failed: true, text: playable.problem } : await this.surface[kind]({ id: `${group}-${kind}`, title: String(title ?? ""), ...placement, [kind]: spec }, playable.steps);
+            const shown = playable.problem ? { failed: true, text: playable.problem } : await this.surface[kind]({ id: cleanId(id) || `${group}-${kind}`, title: String(title ?? ""), ...placement, [kind]: spec }, playable.steps);
             if (shown.failed) return { text: `Nothing was explained, fix the ${kind} first: ${shown.text}`, failed: true };
             run.stage = { id: shown.id, kind, spec, sent: playable.steps.length };
             run.notes.push(...playable.dropped);
@@ -354,9 +355,10 @@ export class ExplainPlayer {
             this.surface.expireGroup(group, this.keepSeconds).catch(() => {});
         }
         const total = run.steps.length;
+        const stage = run.stage ? ` Its ${run.stage.kind} is the panel "${run.stage.id}": to carry on, pass that id to live_explain so the next steps play on it instead of opening another.` : "";
         const summary = run.stopped
-            ? `The user interrupted the explanation after ${completed} of ${total} steps.`
-            : `Narrated all ${total} steps on the user's screen; the drawings stay up for a while.`;
+            ? `The user interrupted the explanation after ${completed} of ${total} steps.${stage}`
+            : `Narrated all ${total} steps on the user's screen; the drawings stay up for a while.${stage}`;
         return { text: run.notes.length ? `${summary} Some drawings or scene actions were skipped: ${run.notes.join(" | ")}` : summary };
     }
 }

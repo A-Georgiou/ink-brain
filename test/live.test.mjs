@@ -340,3 +340,19 @@ test("tool calls whose request or answer got lost are answered again, once each"
     assert.deepEqual(answered.at(-1), { requestId: "lost-answer", result: "read 2" });
     assert.equal(runs, 2);
 });
+
+test("a follow-up explanation carries on with the stage it is given and says which one that is", async () => {
+    const { player, log, lines } = explainer();
+    const board = { elements: [{ id: "eq", type: "tex", tex: "x = 1" }] };
+    const first = player.play({ board, steps: [{ say: "Here" }] });
+    await tick();
+    lines[0].start();
+    lines[0].end();
+    assert.match((await first).text, /the panel "explain-1-board": to carry on, pass that id/);
+    const again = player.play({ id: "explain-1-board", board, steps: [{ say: "Again" }] });
+    await tick();
+    assert.deepEqual(log.filter((line) => line.startsWith("board ")), ["board explain-1-board 0", "board explain-1-board 0"]);
+    lines[1].start();
+    lines[1].end();
+    await again;
+});

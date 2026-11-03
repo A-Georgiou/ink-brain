@@ -489,11 +489,13 @@ export const EXPLAIN_TOOL = {
         "Teach like a tutor at a whiteboard: a narrated explanation whose steps are spoken one by one while their visuals build up. Use it for how and why questions, walkthroughs and whenever the user is confused, " +
         "with 2 to 8 short steps that build on each other. A step can sketch on the screen (draw; re-send a diagram with the same id and more nodes to grow it), open a panel, or animate the explanation's stage: " +
         "a board, a 2D motion graphic in the style of 3Blue1Brown for maths, formulas, algorithms and dense text, or a scene, a 3D stage for physical things (one stage per explanation). " +
-        "It returns when the narration finishes or the user interrupts; then reply with at most one short sentence, since the explanation was already spoken.",
+        "It returns when the narration finishes or the user interrupts; then reply with at most one short sentence, since the explanation was already spoken. " +
+        "Pass the id it gives back to carry on with that same stage on a later turn, rather than opening another beside it.",
     parameters: {
         type: "object",
         properties: {
             title: { type: "string" },
+            id: { type: "string", description: "Id of an explanation's stage to carry on with, so the next steps play on the board or scene already on screen instead of opening another beside it." },
             board: {
                 type: "object",
                 description: "Optional 2D motion-graphics board shown in a panel for the whole explanation; animate it with each step's board actions.",
