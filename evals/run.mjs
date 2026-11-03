@@ -1,4 +1,4 @@
-// Plays scenarios or compares recorded runs (npm run eval -- [--only id,id] [--category maths,3d] [--repeat 2] [--replay label] [--versus baseline,candidate]).
+// Plays scenarios or recorded runs; use capture.mjs --refresh-pages to refresh archives before comparing both arms.
 import fs from "node:fs";
 import { createHash } from "node:crypto";
 import os from "node:os";
@@ -28,12 +28,14 @@ import { SCENARIOS } from "./scenarios.mjs";
 import { awaitStage } from "./snapshot.mjs";
 import { openStage, SCREEN } from "./stage.mjs";
 import { PairJudge, pairSources, sourceId, summarizePairs } from "./versus.mjs";
+import { createPageArchive } from "./web-archive.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const measurement = createHash("sha256");
-for (const file of ["run.mjs", "stage.mjs", "snapshot.mjs", "judge.mjs", "scenarios.mjs", "aim.mjs", "board-audit.mjs", "conversation.mjs", "latency.mjs", "layout.mjs", "learner.mjs"]) measurement.update(fs.readFileSync(path.join(here, file)));
+for (const file of ["run.mjs", "stage.mjs", "snapshot.mjs", "judge.mjs", "scenarios.mjs", "aim.mjs", "board-audit.mjs", "conversation.mjs", "latency.mjs", "layout.mjs", "learner.mjs", "web-archive.mjs"]) measurement.update(fs.readFileSync(path.join(here, file)));
 const MEASUREMENT = measurement.digest("hex").slice(0, 12);
 const FIXTURES = path.join(here, "fixtures");
+const PAGE_ARCHIVE = createPageArchive(FIXTURES);
 const WORK = path.join(os.tmpdir(), "ink-brain-evals");
 const argv = process.argv.slice(2);
 const option = (name, fallback) => (argv.includes(`--${name}`) ? argv[argv.indexOf(`--${name}`) + 1] : fallback);
@@ -48,6 +50,7 @@ const OWN_TOOLS = new Set(STANDALONE_TOOLS.map((tool) => tool.name));
 const VISUAL_TOOLS = new Set(["live_explain", "live_panel", "live_annotate", "live_image", "live_cutout"]);
 const VISUAL_CALLS = new Set(["annotate", "panel", "cutout", "image"]);
 const STREAM = !argv.includes("--no-stream");
+const REFRESH_PAGES = argv.includes("--refresh-pages");
 // Replays the tool calls recorded under that label instead of asking the model, to compare rendering alone.
 const REPLAY = option("replay", null);
 const REJUDGE_FROM = option("rejudge-from", null);
@@ -86,7 +89,9 @@ async function play(scenario, dir, { reader, client, replay = null, grid }) {
     const roots = [path.join(os.homedir(), ".copilot", "session-state"), workspace];
     const asked = turnsOf(scenario);
     const many = asked.length > 1;
-    const record = { text: "", captions: [], tools: [], frames: [], drawn: [], timeline: [], console: [], checks: [], controls: false, error: null, firstWords: null, firstVisual: null, firstNarration: null, writing: null, streamed: null, total: null, ...(many ? { turns: [] } : {}) };
+    const record = { text: "", captions: [], tools: [], frames: [], drawn: [], timeline: [], console: [], checks: [], controls: false, error: null, firstWords: null, firstVisual: null, firstNarration: null, writing: null, streamed: null, total: null, unfrozenReads: replay ? replay.unfrozenReads : [], webReads: replay ? replay.webReads : [], ...(many ? { turns: [] } : {}) };
+    const referenceFile = path.join(FIXTURES, `${fixtureOf(scenario)}.reference.txt`);
+    const reference = meta.reference && fs.existsSync(referenceFile) ? { ...meta.reference, text: fs.readFileSync(referenceFile, "utf8"), capturedAt: meta.captured } : null;
     let turn = { ask: asked[0].ask, at: 0, text: "", captions: [], tools: [], firstWords: null, firstVisual: null, error: null };
     const elements = loadElements(fixtureOf(scenario));
     const stage = await openStage({ image: screen, title: meta.title, onConsole: (line) => record.console.push(line.slice(0, 400)) });
@@ -181,7 +186,13 @@ async function play(scenario, dir, { reader, client, replay = null, grid }) {
             const url = String(args.url ?? "").trim();
             if (!siteOf(url)) return { text: "live_read needs a full http or https address.", failed: true };
             try {
-                const page = await reader.read(url, { allowed: () => true, refresh: args.refresh === true });
+                const { page, source, digest, url: archivedUrl } = await PAGE_ARCHIVE.read(scenario.id, url, {
+                    reference,
+                    refresh: REFRESH_PAGES,
+                    onLive: (address) => record.unfrozenReads.push(address),
+                    load: () => reader.read(url, { allowed: () => true, refresh: REFRESH_PAGES || args.refresh === true }),
+                });
+                record.webReads.push({ url: archivedUrl, source, digest });
                 return { text: describePage(page, { from: args.from, find: args.find }), ...(page.image ? { images: [page.image] } : {}) };
             } catch (error) {
                 return { text: `Could not read ${url}: ${error.message}. Answer from what is on screen.`, failed: true };
@@ -397,6 +408,8 @@ function measure(scenario, meta, record, grid, elements) {
     const t = meta.target;
     const covered = record.frames.map(({ layout }) => (layout ? [layout.bubble, layout.captions, ...layout.panels].filter(Boolean).reduce((sum, r) => sum + intersection(t, r), 0) / (t.w * t.h) : 0));
     const noted = record.frames.map(({ layout }) => (layout?.notes ?? []).reduce((sum, r) => sum + intersection(t, r), 0) / (t.w * t.h));
+    const reads = record.tools.filter((tool) => tool.name === "live_read").map((tool) => tool.args.url);
+    const snapshots = Array.isArray(record.webReads) && record.webReads.every((read) => read.digest) ? record.webReads.map(({ url, digest }) => ({ url, digest })) : null;
     return {
         media: [...media],
         mediaMatch: scenario.expect.some((m) => media.has(m)),
@@ -417,7 +430,10 @@ function measure(scenario, meta, record, grid, elements) {
         noteInk: scenario.category.startsWith("pointing") ? Math.max(0, ...record.frames.flatMap(({ layout }) => (layout?.notes ?? []).map((note) => inkIn(grid, note)))) : undefined,
         pointed: scenario.mark === false ? pointedAt(t, record.tools) : undefined,
         aim: scenario.category.startsWith("pointing") ? aimAt(meta, drawnShapes(record), elements ?? []) : undefined,
-        reads: record.tools.filter((tool) => tool.name === "live_read").map((tool) => tool.args.url),
+        reads,
+        webFrozen: record.unfrozenReads?.length ? false : (reads.length ? (Array.isArray(record.unfrozenReads) && snapshots?.length === reads.length ? true : null) : true),
+        unfrozenReads: Array.isArray(record.unfrozenReads) ? [...new Set(record.unfrozenReads)] : null,
+        readSnapshots: snapshots,
         ...(record.turns ? conversationMetrics(record) : {}),
     };
 }
@@ -570,7 +586,7 @@ app.whenReady().then(async () => {
     // Re-running some scenarios into an existing label replaces just those.
     const summaryFile = path.join(OUT, "summary.json");
     const earlier = fs.existsSync(summaryFile) ? JSON.parse(fs.readFileSync(summaryFile, "utf8")).results.filter((r) => !results.some((n) => n.id === r.id)) : [];
-    const summary = summarize(LABEL, [...earlier, ...results], { model: CONFIG.model, effort: EFFORT, stream: STREAM, judge: JUDGE.models.join("+"), measurement: REJUDGE_FROM || argv.includes("--rejudge") ? null : MEASUREMENT, ...(REJUDGE_FROM ? { rejudgedFrom: REJUDGE_FROM } : {}), ...(REPLAY ? { replayedFrom: REPLAY } : {}) });
+    const summary = summarize(LABEL, [...earlier, ...results], { model: CONFIG.model, effort: EFFORT, stream: STREAM, judge: JUDGE.models.join("+"), measurement: REJUDGE_FROM || argv.includes("--rejudge") ? null : MEASUREMENT, ...(REJUDGE_FROM ? { rejudgedFrom: REJUDGE_FROM } : {}), ...(REPLAY ? { replayedFrom: REPLAY } : {}), ...(REFRESH_PAGES ? { refreshedPages: true } : {}) });
     fs.writeFileSync(summaryFile, JSON.stringify(summary, null, 1));
     printReport([summary]);
     await client.stop();

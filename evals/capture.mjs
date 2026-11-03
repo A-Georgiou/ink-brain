@@ -1,4 +1,4 @@
-// Captures fixtures from the real pages (npm run eval:capture -- [--only id,id] [--force] [--elements]): Chrome showing the page, the target, the circle and reference text; --elements only records the page's elements for fixtures that lack them, when the page still matches.
+// Captures fixture pages; --refresh-pages re-reads only archived sources and reference URLs without changing screenshots.
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -6,9 +6,11 @@ import { app, BrowserWindow, session } from "electron";
 import { Reader } from "../src/main/reader.mjs";
 import { PAGE_ELEMENTS } from "./elements.mjs";
 import { SCENARIOS } from "./scenarios.mjs";
+import { createPageArchive } from "./web-archive.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURES = path.join(here, "fixtures");
+const archive = createPageArchive(FIXTURES);
 const [WIDTH, HEIGHT, CHROME] = [1512, 982, 102];
 const args = process.argv.slice(2);
 const only = args.includes("--only") ? args[args.indexOf("--only") + 1].split(",") : null;
@@ -152,6 +154,7 @@ async function capture(scenario, reader) {
             const read = await reader.read(refUrl, { allowed: () => true, timeoutMs: 20_000 }).catch((error) => ({ error: error.message }));
             meta.reference = { url: refUrl, ok: !read.error, chars: read.text?.length ?? 0 };
             fs.writeFileSync(path.join(FIXTURES, `${scenario.id}.reference.txt`), read.error ? `Could not read ${refUrl}: ${read.error}` : `${read.title}\n${read.url}\n\n${read.text.slice(0, 40_000)}`);
+            if (!read.error && read.text?.trim()) archive.store(scenario.id, refUrl, read, { origin: "capture" });
         }
         fs.writeFileSync(path.join(FIXTURES, `${scenario.id}.json`), JSON.stringify(meta, null, 2));
         return `${scenario.id.padEnd(16)} ${target.w}x${target.h} at ${target.x},${target.y}${meta.reference ? `  reference ${meta.reference.ok ? `${meta.reference.chars} chars` : "FAILED"}` : ""}`;
@@ -166,6 +169,26 @@ app.whenReady().then(async () => {
     const userAgent = app.userAgentFallback.replace(/ (Electron|ink-brain)\/\S+/g, "");
     app.userAgentFallback = userAgent;
     const reader = new Reader({ BrowserWindow, session, userAgent });
+    if (args.includes("--refresh-pages")) {
+        for (const scenario of SCENARIOS.filter((s) => !only || only.includes(s.id))) {
+            const file = path.join(FIXTURES, `${scenario.fixture ?? scenario.id}.json`);
+            const reference = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")).reference?.url : null;
+            const urls = new Set([...archive.urls(scenario.id), ...(reference ? [reference] : [])]);
+            let refreshed = 0;
+            for (const url of urls) {
+                try {
+                    archive.store(scenario.id, url, await reader.read(url, { allowed: () => true, refresh: true, timeoutMs: 20_000 }), { origin: "refresh" });
+                    refreshed++;
+                } catch (error) {
+                    console.warn(`${scenario.id}: could not refresh ${url}: ${error.message}`);
+                }
+            }
+            console.log(`${scenario.id}: refreshed ${refreshed}/${urls.size} archived pages`);
+            if (refreshed && reference) console.warn(`${scenario.id}: screen and judge reference were not recaptured; use --force if the source changed before comparing runs`);
+        }
+        app.quit();
+        return;
+    }
     for (const scenario of SCENARIOS.filter((s) => !s.fixture && (!only || only.includes(s.id)))) {
         const captured = fs.existsSync(path.join(FIXTURES, `${scenario.id}.json`));
         if (elementsOnly ? !captured : captured && !force) continue;

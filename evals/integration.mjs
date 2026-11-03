@@ -44,6 +44,17 @@ export function integrationReport(candidate, baseline, { controls = {}, top = 3,
         category,
         ...metrics(left.filter((run) => run.category === category), right.filter((run) => run.category === category)),
     }));
+    const snapshotHashes = (runs) => {
+        const pages = new Map();
+        for (const run of runs) for (const { url, digest } of run.metrics?.readSnapshots ?? []) {
+            const key = `${run.scenario}\0${url}`;
+            if (!pages.has(key)) pages.set(key, new Set());
+            pages.get(key).add(digest);
+        }
+        return pages;
+    };
+    const [leftPages, rightPages] = [snapshotHashes(left), snapshotHashes(right)];
+    const webMismatch = [...leftPages].filter(([key, hashes]) => rightPages.has(key) && new Set([...hashes, ...rightPages.get(key)]).size > 1).map(([key]) => key.replace("\0", ": "));
     const ranked = [...score.perScenario].sort((a, b) => a.delta - b.delta);
     return {
         overall: metrics(left, right),
@@ -53,6 +64,11 @@ export function integrationReport(candidate, baseline, { controls = {}, top = 3,
         nulls: Object.entries(controls).map(([label, runs]) => ({ label, score: control(runs, "score", bootstrap), firstVisual: control(runs, "metrics.firstVisual", bootstrap) })),
         unpaired: score.perScenario.filter((row) => row.runs.includes(1)).length,
         approximate: [left, right].map((runs) => runs.filter((run) => run.replayTimingApproximate).length),
+        web: [left, right].map((runs) => ({
+            live: runs.filter((run) => run.metrics?.webFrozen === false).length,
+            unknown: runs.filter((run) => run.metrics?.webFrozen !== false && run.metrics?.reads?.length && (run.metrics.webFrozen == null || !run.metrics.readSnapshots || run.metrics.readSnapshots.length < run.metrics.reads.length)).length,
+        })),
+        webMismatch,
     };
 }
 
@@ -66,6 +82,8 @@ export function printIntegration(report, candidate, baseline) {
     };
     console.log(`Integration: ${candidate} (candidate) vs ${baseline} (baseline); paired scenario means and 95% bootstrap CIs; negative latency is faster.`);
     if (report.approximate.some(Boolean)) console.log(`Replay timing: ${report.approximate[0]} candidate and ${report.approximate[1]} baseline runs lacked text deltas; first words use source timestamps and done latency is unavailable for those pairs.`);
+    if (report.web.some(({ live, unknown }) => live || unknown)) console.log(`WARNING: web archive: ${report.web.map(({ live, unknown }, i) => `${i ? "baseline" : "candidate"} ${live} live and ${unknown} unknown runs`).join("; ")}. Source-dependent scores require both arms to use the same frozen pages.`);
+    if (report.webMismatch.length) console.log(`WARNING: ${report.webMismatch.length} shared source URLs changed archived content: ${report.webMismatch.slice(0, 3).join("; ")}. Re-run both arms on the same page snapshots.`);
     row("Overall", report.overall);
     for (const { category, ...value } of report.categories) row(category, value);
     for (const [title, rows] of [["Top regressions", report.regressions], ["Top improvements", report.improvements]]) {
