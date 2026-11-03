@@ -160,7 +160,7 @@ api.on("live:state", (next) => {
     if (next.pen && !wasPen) enterPen();
     if (!next.pen && wasPen) exitPen();
     updateDock();
-    setup.render(next.permissions);
+    setup.render(next.permissions, next.copilot);
 });
 
 function enterPen() {
@@ -623,19 +623,30 @@ const setup = (() => {
     el.addEventListener("click", (event) => {
         const button = event.target.closest("button");
         if (!button) return;
-        const kind = button.closest("li")?.dataset.kind;
-        if (kind) api.command("requestPermission", kind);
+        const item = button.closest("li");
+        if (item?.dataset.kind === "copilot") {
+            api.command("signIn");
+            item.querySelector("span").textContent = "Finish in the Terminal window that opened. This updates by itself.";
+        } else if (item) api.command("requestPermission", item.dataset.kind);
         else if (button.dataset.action === "restart") api.command("restartHelper");
         else if (button.dataset.action === "done") el.classList.add("hidden");
     });
     return {
         show: () => el.classList.remove("hidden"),
-        render(permissions) {
-            if (!permissions) return;
+        render(permissions, copilot) {
             for (const item of el.querySelectorAll("li")) {
+                const button = item.querySelector("button");
+                if (item.dataset.kind === "copilot") {
+                    item.hidden = !copilot;
+                    item.classList.toggle("granted", Boolean(copilot?.signedIn));
+                    button.disabled = Boolean(copilot?.signedIn);
+                    button.textContent = copilot?.signedIn ? "Signed in" : "Sign in";
+                    if (copilot?.signedIn) item.querySelector("span").textContent = copilot.login ? `Signed in as ${copilot.login}.` : "Signed in.";
+                    continue;
+                }
+                if (!permissions) continue;
                 const status = permissions[item.dataset.kind];
                 const granted = status === "granted";
-                const button = item.querySelector("button");
                 item.classList.toggle("granted", granted);
                 button.disabled = granted;
                 button.textContent = granted ? "Granted" : status === "denied" || status === "missing" ? "Open Settings" : "Grant";

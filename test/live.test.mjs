@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { ToolCalls, chooseModel, effortFor } from "../src/main/brain.mjs";
+import { ToolCalls, chooseModel, effortFor, signInScript } from "../src/main/brain.mjs";
 import { Controller } from "../src/main/control.mjs";
 import { ExplainPlayer } from "../src/main/explain.mjs";
 import { createCheckWaiter, describeAnswer, normalizeCheck, validateCheck } from "../src/main/tutor.mjs";
@@ -22,6 +23,24 @@ test("the model falls back to one the account can use, and to Auto on Auto-only 
     assert.equal(chooseModel([auto], "gpt-6.1-terra"), "auto");
     assert.equal(chooseModel([model("gpt-6.1-terra"), auto], "auto"), "auto");
     assert.equal(effortFor("auto", "high"), undefined);
+});
+
+test("the sign-in script marks success only when copilot login succeeds", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "ink brain's sign-in "));
+    const bin = path.join(root, "bin");
+    fs.mkdirSync(bin);
+    const signIn = (exitCode) => {
+        fs.writeFileSync(path.join(bin, "copilot"), `#!/bin/bash\n[ "$1" = login ] && exit ${exitCode}\nexit 2\n`, { mode: 0o755 });
+        const marker = path.join(root, "signed-in");
+        fs.rmSync(marker, { force: true });
+        const script = path.join(root, "sign-in.command");
+        fs.writeFileSync(script, signInScript({ searchPath: bin, marker }), { mode: 0o700 });
+        spawnSync("/bin/bash", [script], { stdio: "ignore" });
+        return fs.existsSync(marker);
+    };
+
+    assert.equal(signIn(0), true);
+    assert.equal(signIn(1), false);
 });
 
 test("images can only be read from Copilot's own image folders", () => {

@@ -19,6 +19,19 @@ export function chooseModel(models, wanted) {
     return FALLBACK_MODELS.find((id) => vision.includes(id)) ?? vision[0] ?? AUTO;
 }
 
+// A Terminal script that installs Copilot CLI if it is missing, signs in and touches marker once signed in.
+export function signInScript({ searchPath, marker }) {
+    const quote = (text) => `'${String(text).replaceAll("'", "'\\''")}'`;
+    return [
+        "#!/bin/bash",
+        `export PATH=${quote(searchPath)}:/opt/homebrew/bin:/usr/local/bin:"$PATH"`,
+        'echo "Signing in to GitHub Copilot for Ink Brain."',
+        "command -v copilot >/dev/null || npm install -g @github/copilot || exit 1",
+        `copilot login && touch ${quote(marker)} && echo "Signed in. You can close this window."`,
+        "",
+    ].join("\n");
+}
+
 // Emits delta(text), message(text), preparing({ name }), input({ id, name, delta }), tool({ name }), idle() and error(Error).
 export class EmbeddedBrain extends EventEmitter {
     id = "standalone";
@@ -110,6 +123,12 @@ export class EmbeddedBrain extends EventEmitter {
         } catch {
             return this.config.model;
         }
+    }
+
+    // The Copilot account answering, as { isAuthenticated, login, statusMessage }.
+    async account() {
+        await this.ensure();
+        return this.#client.getAuthStatus();
     }
 
     async #mcpServers() {

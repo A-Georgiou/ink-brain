@@ -10,9 +10,9 @@ import { inkGrid, needsSettling, settleMarks } from "../shared/calm.mjs";
 import { boundsOfMarks, cropAround, isRegion, modelImageSize, panelRect, snapPoint, snapShape } from "../shared/geometry.mjs";
 import { STANDALONE_TOOLS, TOOL_NAMES, toToolResult } from "../shared/live-tools.mjs";
 import { SpeechChunker } from "../shared/speech.mjs";
-import { EmbeddedBrain, LinkedBrain } from "./brain.mjs";
+import { EmbeddedBrain, LinkedBrain, signInScript } from "./brain.mjs";
 import { Bridge } from "./bridge.mjs";
-import { CONFIG_PATH, CUTOUTS_DIR, DEFAULTS, MEMORY_DIR, MODELS_DIR, WORKSPACE_DIR, ensureConfigDir, loadConfig, saveConfig } from "./config.mjs";
+import { CONFIG_DIR, CONFIG_PATH, CUTOUTS_DIR, DEFAULTS, MEMORY_DIR, MODELS_DIR, WORKSPACE_DIR, ensureConfigDir, loadConfig, saveConfig } from "./config.mjs";
 import { Controller } from "./control.mjs";
 import { ExplainPlayer, readingTime } from "./explain.mjs";
 import { clearStaleGrants, Helper } from "./helper.mjs";
@@ -54,6 +54,8 @@ const state = {
     target: config.defaultTarget,
     model: config.model,
     permissions: null,
+    // { signedIn, login } once the built-in session has checked its Copilot account.
+    copilot: null,
 };
 
 let overlay = null;
@@ -293,6 +295,8 @@ function runCommand(name, value) {
             return decideApproval(String(value), false);
         case "requestPermission":
             return requestPermission(String(value));
+        case "signIn":
+            return signIn();
         case "controlDecision":
             return decide(controlRequests, value);
         case "webDecision":
@@ -638,6 +642,49 @@ async function requestPermission(kind) {
         shell.openExternal(`x-apple.systempreferences:com.apple.preference.security?${SETTINGS_PANES[kind]}`);
     }
     pushState();
+}
+
+// Shows the sign-in step while the built-in session has no Copilot account.
+async function checkSignIn() {
+    const account = await embedded.account().catch(() => null);
+    state.copilot = account && { signedIn: account.isAuthenticated, login: account.login ?? null };
+    if (account && !account.isAuthenticated) showSetup(true);
+    pushState();
+}
+
+// A fresh Copilot connection picks up a sign-in made since the last one.
+let reconnecting = null;
+function reconnect() {
+    reconnecting ??= (async () => {
+        await embedded.stop();
+        await embedded.ensure().catch(() => {});
+        state.model = embedded.model;
+        await checkSignIn();
+    })().finally(() => {
+        reconnecting = null;
+    });
+    return reconnecting;
+}
+
+const SIGNED_IN = path.join(CONFIG_DIR, "signed-in");
+let signInTimer = 0;
+
+// Runs copilot login in Terminal and reconnects once it succeeds.
+function signIn() {
+    const script = path.join(CONFIG_DIR, "sign-in.command");
+    fs.rmSync(SIGNED_IN, { force: true });
+    fs.writeFileSync(script, signInScript({ searchPath: process.env.PATH ?? "", marker: SIGNED_IN }));
+    fs.chmodSync(script, 0o700);
+    shell.openPath(script).then((error) => error && toast(error, "warn"));
+    clearInterval(signInTimer);
+    const until = Date.now() + 600_000;
+    signInTimer = setInterval(() => {
+        if (Date.now() > until) return clearInterval(signInTimer);
+        if (!fs.existsSync(SIGNED_IN)) return;
+        clearInterval(signInTimer);
+        fs.rmSync(SIGNED_IN, { force: true });
+        reconnect();
+    }, 2_000);
 }
 
 // ---------------------------------------------------------------- screen capture and tools
@@ -1179,6 +1226,10 @@ async function runTurn({ text, marks }) {
     send("live:turn", { type: "start", id: turn.id, question: text, target: brain.label, anchor: boundsOfMarks(marks) });
     send("live:flash", {});
     try {
+        if (brain === embedded && state.copilot?.signedIn === false) {
+            await reconnect();
+            if (state.copilot?.signedIn === false) throw new Error("Sign in to GitHub Copilot first: click Sign in on the setup card.");
+        }
         const [shot, app] = await Promise.all([captureScreen({ marks }), front?.app ? front : frontmost()]);
         if (turn.done) return turn.ended;
         setImmediate(() => shareInk(shot.images[0]));
@@ -1448,6 +1499,7 @@ async function start() {
         .then(() => {
             state.model = embedded.model;
             pushState();
+            checkSignIn();
             if (memoryOn("copilotSessions")) embedded.recentSessions().catch(() => {});
         })
         .catch((error) => toast(`Ink Brain is not ready: ${error.message}. Check that you are signed in to Copilot CLI.`, "error"));

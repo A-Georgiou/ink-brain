@@ -1150,6 +1150,10 @@ body.checking #bubble {
     border-radius: 12px;
 }
 
+.perm-list li[hidden] {
+    display: none;
+}
+
 .perm-list li div {
     flex: 1;
     display: grid;
