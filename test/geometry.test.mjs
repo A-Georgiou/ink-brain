@@ -4,7 +4,7 @@ import { anchorAt, pageState, pageTitle } from "../src/shared/anchors.mjs";
 import { clearSpot, validateBoard } from "../src/shared/board.mjs";
 import { compile } from "../src/shared/mathexpr.mjs";
 import { validateScene } from "../src/shared/scene.mjs";
-import { bubbleSpot, cropAround, describeMarks, modelImageSize, overlapArea, shapeToOverlay, snapShape, validateShape } from "../src/shared/geometry.mjs";
+import { bubbleSpot, cropAround, describeMarks, modelImageSize, overlapArea, shapeToOverlay, snapShape, stageSpot, validateShape } from "../src/shared/geometry.mjs";
 
 test("model screenshots are capped at the configured long edge", () => {
     assert.deepEqual(modelImageSize(1512, 982), { width: 1512, height: 982, scale: 1 });
@@ -162,4 +162,16 @@ test("marks snap onto the control under them, and only when it plausibly is what
     assert.deepEqual(snapShape({ kind: "pulse", x: 214, y: 236 }, button), { kind: "pulse", x: 220, y: 237 });
     assert.deepEqual(snapShape({ kind: "arrow", from: [220, 330], to: [220, 240] }, button).to, [220, 254]);
     assert.deepEqual(snapShape({ kind: "pulse", x: 233, y: 363 }, fieldset), { kind: "pulse", x: 233, y: 363 });
+});
+
+test("3D stages take the most free room beside the circled thing and only ever clip a corner of it", () => {
+    const view = { width: 1512, height: 982 };
+    const target = { x: 264, y: 257, w: 800, h: 600 };
+    const spot = stageSpot({ target, view, max: [920, 700], min: [400, 300] });
+    const middle = { x: 464, y: 407, w: 400, h: 300 };
+    assert.ok(spot.w >= 400 && spot.h >= 300);
+    assert.equal(overlapArea(spot, [middle]), 0);
+    assert.ok(overlapArea(spot, [target]) <= 800 * 600 * 0.05);
+    assert.deepEqual(stageSpot({ target: { x: 40, y: 300, w: 200, h: 150 }, view, max: [920, 700], min: [400, 300] }).w, 920);
+    assert.equal(stageSpot({ target: { x: 0, y: 0, w: 1512, h: 982 }, view, max: [920, 700], min: [400, 300] }), null);
 });

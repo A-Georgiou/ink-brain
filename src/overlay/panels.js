@@ -1,10 +1,13 @@
 // Floating panels on the user's screen: Markdown inline; diagrams, 3D and HTML in sandboxed frames.
 import { renderMarkdown } from "./markdown.js";
+import { stageSpot } from "/shared/geometry.mjs";
 
 const KIND_LABEL = { markdown: "Notes", mermaid: "Diagram", three: "3D", html: "Interactive", scene: "Explainer", board: "Explainer", cutout: "Cutout", image: "Render" };
 const DEFAULT_SIZE = { markdown: [440, 380], mermaid: [600, 440], three: [560, 460], html: [600, 460], image: [520, 420], scene: [720, 540], board: [760, 520] };
 // Boards and scenes scale their content to the panel, so smaller ones become hard to read.
 const MIN_SIZE = { scene: [520, 380], board: [640, 380] };
+// A 3D stage beside what the user circled takes as much of the free space as it can, from this size down.
+const [STAGE_MAX, STAGE_MIN] = [[920, 700], [400, 300]];
 const SANDBOX_URL = "/overlay/sandbox.html";
 const CLOSE_ICON = `<svg viewBox="0 0 24 24" width="14" height="14"><path stroke="currentColor" stroke-width="2.2" stroke-linecap="round" d="M6 6l12 12M18 6 6 18"/></svg>`;
 
@@ -16,10 +19,11 @@ export class Panels {
     #frames = new Map();
     #z = 20;
 
-    // pageFor(rect) names the page a panel at rect belongs to, so it hides and moves with that page.
-    constructor(container, { avoid = () => [], onLayout = () => {}, pageFor = () => null } = {}) {
+    // pageFor(rect) names the page a panel at rect belongs to, so it hides and moves with that page; target() is what the user circled.
+    constructor(container, { avoid = () => [], target = () => null, onLayout = () => {}, pageFor = () => null } = {}) {
         this.container = container;
         this.avoid = avoid;
+        this.target = target;
         this.onLayout = onLayout;
         this.pageFor = pageFor;
         addEventListener("message", (event) => this.#onMessage(event));
@@ -300,7 +304,10 @@ export class Panels {
         const height = clamp(rect.height ?? (isNew ? defaultHeight : el.offsetHeight), min[1], innerHeight - margin * 2);
         const placeSelf = !Number.isFinite(rect.x) || !Number.isFinite(rect.y);
         if (isNew) panel.autoPlaced = placeSelf;
-        const spot = isNew ? this.#place(width, height, panel, placeSelf ? null : rect, undefined, min) : { x: placeSelf ? el.offsetLeft : rect.x, y: placeSelf ? el.offsetTop : rect.y, w: width, h: height };
+        const target = isNew && placeSelf && kind === "scene" && !Number.isFinite(rect.width) && !Number.isFinite(rect.height) ? this.target() : null;
+        const others = [...this.#panels.values()].filter((p) => p !== panel && p.el.isConnected && !p.el.classList.contains("away")).map((p) => asRect(p.el.getBoundingClientRect()));
+        const roomy = target && stageSpot({ target: asRect(target), view: { width: innerWidth, height: innerHeight }, max: STAGE_MAX, min: STAGE_MIN, others });
+        const spot = roomy || (isNew ? this.#place(width, height, panel, placeSelf ? null : rect, undefined, min) : { x: placeSelf ? el.offsetLeft : rect.x, y: placeSelf ? el.offsetTop : rect.y, w: width, h: height });
         el.style.width = `${spot.w}px`;
         el.style.height = `${spot.h}px`;
         el.style.left = `${clamp(spot.x, margin, innerWidth - spot.w - margin)}px`;

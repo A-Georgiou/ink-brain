@@ -50,7 +50,7 @@ let lastAnchor = null;
 const ink = new Ink($("#ink"));
 const annotations = new Annotations({ svgRoot: $("#annotations"), labels: $("#labels"), boards: $("#boards"), pointer: $("#pointer"), ripples: $("#ripples") });
 const bubble = createBubble();
-const panels = new Panels($("#panels"), { avoid: () => [lastAnchor, bubble.rect()], onLayout: () => bubble.reflow(), pageFor: (rect) => pages.place(rect) });
+const panels = new Panels($("#panels"), { avoid: () => [lastAnchor, bubble.rect()], target: () => lastAnchor, onLayout: () => bubble.reflow(), pageFor: (rect) => pages.place(rect) });
 
 // ------------------------------------------------ pages: drawings stay with their tab, window and Space
 
