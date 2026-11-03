@@ -174,16 +174,17 @@ const COUNT = { bevel: 14, blades: 10, rack: 9, wheel: 8 };
 // Builds def.part on a [w, h, d] box; round parts turn about z, straight ones run along y or x.
 export function buildMachine(def, [w, h, d], paint) {
     const kind = def.part;
-    const across = kind === "rack" ? h : Math.max(w, d);
+    const wide = Math.max(num(w, 1), num(d, 1));
+    const tall = num(h, wide * 0.6);
     const p = {
-        radius: Math.max(0.001, num(def.radius, across / 2)),
+        radius: Math.max(0.001, num(def.radius, (kind === "rack" ? tall : wide) / 2)),
         teeth: Math.round(Math.min(90, Math.max(3, num(def.teeth, COUNT[kind] ?? 8)))),
         coils: Math.min(60, Math.max(1, num(def.coils, 8))),
         bulge: num(def.bulge, 0),
         hole: Math.max(0, num(def.hole, 0)),
     };
-    p.length = Math.max(0.001, num(def.length, kind === "rack" ? w : h));
-    p.depth = Math.max(0.001, num(def.height, Math.min(d, p.radius * 0.9)));
+    p.length = Math.max(0.001, num(def.length, kind === "rack" ? num(w, wide) : tall));
+    p.depth = Math.max(0.001, num(def.height, Math.min(num(d, wide), p.radius * 0.9)));
     const body = paint({ ...STEEL, ...(kind === "lens" ? GLASS : {}), ...(def.color ? { color: def.color } : {}) });
     const part = new THREE.Group();
     part.add(BUILD[kind](p, body, paint));

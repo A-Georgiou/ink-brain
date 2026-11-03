@@ -278,14 +278,16 @@ test("radial copies set on a wheel with no parent go round the wheel's axle, not
     assert.deepEqual(items.get("spokes").home.position.toArray(), [-14, 3, 0]);
 });
 
-test("every ready-made part kind builds real geometry around its origin", () => {
+test("every ready-made part kind builds real geometry around its origin, sized or on a footprint", () => {
     const paint = ({ color }) => new THREE.MeshStandardMaterial({ color });
     for (const kind of PART_KINDS) {
-        const obj = buildPart({ id: kind, type: "part", part: kind, grid: [2, 2] }, [2, 1, 2], paint);
-        const box = new THREE.Box3().setFromObject(obj);
-        const size = box.getSize(new THREE.Vector3());
-        assert.ok(size.x > 0.1 && size.y > 0.1 && size.z > 0.1, `${kind} is flat or empty: ${size.toArray()}`);
-        assert.ok(box.getCenter(new THREE.Vector3()).length() < 3, `${kind} is built away from its origin`);
+        for (const tall of [1, NaN]) {
+            const obj = buildPart({ id: kind, type: "part", part: kind, grid: [2, 2] }, [2, tall, 2], paint);
+            const box = new THREE.Box3().setFromObject(obj);
+            const size = box.getSize(new THREE.Vector3());
+            assert.ok(size.x > 0.1 && size.y > 0.1 && size.z > 0.1, `${kind} is flat or empty: ${size.toArray()}`);
+            assert.ok(box.getCenter(new THREE.Vector3()).length() < 3, `${kind} is built away from its origin`);
+        }
     }
 });
 
