@@ -54,11 +54,15 @@ export function shapeToOverlay(shape, scale) {
             return mapped;
         });
     }
+    if (isRegion(shape.target)) out.target = { x: shape.target.x * k, y: shape.target.y * k, w: shape.target.w * k, h: shape.target.h * k };
     return out;
 }
 
 // Marks that pick out one thing on screen snap onto the real element there, when one plausibly is what they meant.
 const SNAP_BOXES = new Set(["circle", "rect", "highlight", "underline", "spotlight"]);
+// Marks that end up beside a control get an outline around it, so it is clear which one is meant.
+const FRAMED = new Set(["arrow", "callout", "marker"]);
+const FRAME_MAX = { w: 240, h: 100 };
 const CONTROLS = new Set(["AXButton", "AXLink", "AXCheckBox", "AXRadioButton", "AXPopUpButton", "AXMenuButton", "AXTextField", "AXTextArea", "AXSearchField", "AXComboBox", "AXTab", "AXSlider", "AXMenuItem", "AXMenuBarItem", "AXDisclosureTriangle", "AXIncrementor", "AXSwitch", "AXToggle"]);
 // Points and arrow tips land only on a control, or failing that a bit of text or an image, never on a container.
 const LEAVES = new Set(["AXStaticText", "AXImage"]);
@@ -68,7 +72,7 @@ const GAP = 3;
 // The point whose element a shape is about, or null for shapes that never snap.
 export function snapPoint(shape) {
     if (SNAP_BOXES.has(shape.kind) && isRegion(shape)) return [shape.x + shape.w / 2, shape.y + shape.h / 2];
-    if (["pulse", "pointer", "callout"].includes(shape.kind) && finite(shape.x, shape.y)) return [shape.x, shape.y];
+    if (["pulse", "pointer", "callout", "marker"].includes(shape.kind) && finite(shape.x, shape.y)) return [shape.x, shape.y];
     if (shape.kind === "arrow" && isPoint(shape.to)) return shape.to;
     return null;
 }
@@ -94,9 +98,10 @@ export function snapShape(shape, elements = []) {
     const small = elements.filter((e) => e.w >= 4 && e.h >= 4 && e.w <= CONTROL_MAX.w && e.h <= CONTROL_MAX.h);
     const target = small.find((e) => CONTROLS.has(e.role)) ?? small.find((e) => LEAVES.has(e.role));
     if (!target) return shape;
-    if (shape.kind === "arrow") return { ...shape, to: edgeToward(shape.from, target) };
+    const framed = FRAMED.has(shape.kind) && target.w <= FRAME_MAX.w && target.h <= FRAME_MAX.h ? { target: { x: target.x, y: target.y, w: target.w, h: target.h } } : {};
+    if (shape.kind === "arrow") return { ...shape, to: edgeToward(shape.from, target), ...framed };
     const [x, y] = shape.kind === "callout" && isPoint(shape.at) ? edgeToward(shape.at, target) : [target.x + target.w / 2, target.y + target.h / 2];
-    return { ...shape, x, y };
+    return { ...shape, x, y, ...framed };
 }
 
 // Overlay rect for a panel: exactly over a region, or wherever x, y, width and height place it.

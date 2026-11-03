@@ -178,6 +178,16 @@ test("marks snap onto the control under them, and only when it plausibly is what
     assert.deepEqual(snapShape({ kind: "pulse", x: 233, y: 363 }, fieldset), { kind: "pulse", x: 233, y: 363 });
 });
 
+test("marks beside a control carry its box, scaled with the screen, so it can be outlined", () => {
+    const button = [{ role: "AXButton", x: 190, y: 223, w: 60, h: 28 }, { role: "AXWebArea", x: 160, y: 192, w: 760, h: 428 }];
+    const box = { x: 190, y: 223, w: 60, h: 28 };
+    assert.deepEqual(snapShape({ kind: "arrow", from: [220, 330], to: [220, 240] }, button).target, box);
+    assert.deepEqual(snapShape({ kind: "marker", x: 214, y: 236, text: "1" }, button), { kind: "marker", x: 220, y: 237, text: "1", target: box });
+    assert.equal(snapShape({ kind: "pulse", x: 214, y: 236 }, button).target, undefined);
+    assert.equal(snapShape({ kind: "callout", x: 214, y: 236, text: "x" }, [{ role: "AXLink", x: 0, y: 0, w: 900, h: 300 }]).target, undefined);
+    assert.deepEqual(shapeToOverlay({ kind: "marker", x: 20, y: 30, target: box }, 0.5).target, { x: 380, y: 446, w: 120, h: 56 });
+});
+
 test("3D stages take the most free room beside the circled thing and only ever clip a corner of it", () => {
     const view = { width: 1512, height: 982 };
     const target = { x: 264, y: 257, w: 800, h: 600 };

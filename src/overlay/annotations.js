@@ -5,6 +5,7 @@ const NS = "http://www.w3.org/2000/svg";
 const ACCENT = "#a371f7";
 const HAND = '"Noteworthy", "Marker Felt", "Chalkboard SE", "Bradley Hand", cursive';
 const BOX_KINDS = new Set(["circle", "rect", "highlight", "underline", "spotlight", "brace", "lens"]);
+const FRAMED_KINDS = new Set(["arrow", "callout", "marker"]);
 const OWN_TEXT_KINDS = new Set(["label", "marker", "pointer", "write", "board", "brace", "callout", "diagram", "lens"]);
 const DEFAULT_COLORS = { check: "#3fb950", cross: "#ff7b72", write: "#f0f6fc" };
 const generator = rough.generator();
@@ -401,11 +402,16 @@ export class Annotations {
         let duration = 0.4;
         let diagram = null;
         const { kind } = shape;
+        // A control a mark was snapped onto gets a tight outline first, then the mark itself.
+        const lead = shape.target && FRAMED_KINDS.has(kind) ? this.#frame(group, shape.target, color, delay, seed) * 0.5 : 0;
+        delay += lead;
 
         if (kind === "circle") {
-            duration = this.#inkPathData(group, sketchEllipse(...centre(shape), shape.w / 2 + 12, shape.h / 2 + 12, (seed % 7) * 0.37), color, delay);
+            const pad = clamp(Math.min(shape.w, shape.h) * 0.2, 4, 12);
+            duration = this.#inkPathData(group, sketchEllipse(...centre(shape), shape.w / 2 + pad, shape.h / 2 + pad, (seed % 7) * 0.37), color, delay);
         } else if (kind === "rect") {
-            duration = this.#ink(group, generator.rectangle(shape.x - 7, shape.y - 7, shape.w + 14, shape.h + 14, this.#opts(color, seed)), delay);
+            const pad = clamp(Math.min(shape.w, shape.h) * 0.2, 3, 7);
+            duration = this.#ink(group, generator.rectangle(shape.x - pad, shape.y - pad, shape.w + pad * 2, shape.h + pad * 2, this.#opts(color, seed)), delay);
         } else if (kind === "highlight") {
             const el = place(div("highlight"), shape.x - 4, shape.y - 2, delay);
             Object.assign(el.style, { width: `${shape.w + 8}px`, height: `${shape.h + 4}px` });
@@ -479,7 +485,9 @@ export class Annotations {
         } else if (kind === "label") {
             nodes.push(this.#pill(shape.text ?? "", shape.x, shape.y, color, delay));
         } else if (kind === "marker") {
-            const el = place(div("anno-marker", (shape.text || String(++this.#markers)).slice(0, 4)), shape.x, shape.y, delay);
+            // Beside a control, the number sits on the outline's corner so it never hides the control itself.
+            const [x, y] = shape.target ? [shape.target.x - 2, shape.target.y - 2] : [shape.x, shape.y];
+            const el = place(div("anno-marker", (shape.text || String(++this.#markers)).slice(0, 4)), x, y, delay);
             el.style.setProperty("--c", color);
             this.labels.append(el);
             nodes.push(el);
@@ -492,7 +500,12 @@ export class Annotations {
         if (shape.text && !OWN_TEXT_KINDS.has(kind)) {
             nodes.push(this.#caption(shape, color, delay + duration * 0.7));
         }
-        return { nodes, duration, diagram };
+        return { nodes, duration: duration + lead, diagram };
+    }
+
+    // A tight rough outline around the control a mark points at.
+    #frame(group, box, color, delay, seed) {
+        return this.#ink(group, generator.rectangle(box.x - 3, box.y - 3, box.w + 6, box.h + 6, this.#opts(color, seed + 9, { roughness: 0.4, bowing: 0.3, strokeWidth: 2, disableMultiStroke: true })), delay);
     }
 
     #pill(text, x, y, color, delay, align = "") {
@@ -591,8 +604,9 @@ export class Annotations {
         nodes.push(written.el);
         const textNode = { cx: ax, cy: ay, w: box.width + 16, h: box.height + 10 };
         const start = edgePoint(textNode, shape.x, shape.y, 4);
-        const end = edgePoint({ cx: shape.x, cy: shape.y, w: 10, h: 10, shape: "ellipse" }, ax, ay, 2);
+        const end = edgePoint({ cx: shape.x, cy: shape.y, w: shape.target ? 2 : 10, h: shape.target ? 2 : 10, shape: "ellipse" }, ax, ay, 2);
         const arrow = this.#arrow(group, start, end, color, delay + written.duration * 0.6, { bend: ax > shape.x ? 0.2 : -0.2, seed });
+        if (shape.target) return written.duration * 0.6 + arrow;
         const dot = place(div("target-dot"), shape.x, shape.y, delay + written.duration * 0.6 + arrow);
         dot.style.setProperty("--c", color);
         this.labels.append(dot);

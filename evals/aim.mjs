@@ -21,7 +21,7 @@ function aims(shapes) {
     return shapes.flatMap((s) => {
         if (s.kind === "arrow" && isPoint(s.to)) return [{ kind: s.kind, point: s.to }];
         if (BOXES.has(s.kind) && isRegion(s)) return [{ kind: s.kind, box: s }];
-        return POINTS.has(s.kind) && Number.isFinite(s.x) && Number.isFinite(s.y) ? [{ kind: s.kind, point: [s.x, s.y] }] : [];
+        return POINTS.has(s.kind) && Number.isFinite(s.x) && Number.isFinite(s.y) ? [{ kind: s.kind, point: [s.x, s.y], framed: Boolean(s.target) }] : [];
     });
 }
 
@@ -44,6 +44,6 @@ export function aimAt({ target, also = [], decoys = [] }, shapes) {
         of: controls.length,
         distance: marks.length ? Math.round(Math.min(...marks.map((aim) => reach(aim, target)))) : null,
         wrong: marks.filter((aim) => decoys.some((decoy) => on(aim, decoy)) && (aim.box || !controls.some((control) => on(aim, control)))).length,
-        onTop: marks.filter((aim) => COVERING.has(aim.kind) && aim.point && inner.w > 0 && inner.h > 0 && gap(inner, aim.point) === 0).length,
+        onTop: marks.filter((aim) => COVERING.has(aim.kind) && !aim.framed && aim.point && inner.w > 0 && inner.h > 0 && gap(inner, aim.point) === 0).length,
     };
 }
