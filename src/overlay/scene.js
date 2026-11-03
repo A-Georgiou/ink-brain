@@ -683,6 +683,7 @@ export async function renderScene(spec, { root, makeLabel, inPlace = false, reso
 
     // When a step acts on a part that is out of view or under the subtitles, the camera eases back out to fit everything shown.
     let refit = 0;
+    let refitPending = false;
     const keepInView = (actions) => {
         const floor = -1 + (2 * inset) / size()[1];
         const outside = (p) => {
@@ -936,8 +937,15 @@ export async function renderScene(spec, { root, makeLabel, inPlace = false, reso
         const found = focusOf(actions);
         if (found.size) focus = found;
         clearTimeout(refit);
+        refitPending = false;
         focusStep(index, actions);
-        if (!actions.some((a) => a?.do === "camera")) refit = setTimeout(() => keepInView(actions), 1400);
+        if (!actions.some((a) => a?.do === "camera")) {
+            refitPending = true;
+            refit = setTimeout(() => {
+                refitPending = false;
+                keepInView(actions);
+            }, 1400);
+        }
     }
 
     function reset() {
@@ -965,6 +973,7 @@ export async function renderScene(spec, { root, makeLabel, inPlace = false, reso
         framed = opening.length ? opening : null;
         for (const m of mechanisms.values()) Object.assign(m, { theta: 0, speed: 0, t: 0, run: (m.run ?? 0) + 1 });
         clearTimeout(refit);
+        refitPending = false;
         played = -1;
         focus = null;
     }
@@ -1193,6 +1202,7 @@ export async function renderScene(spec, { root, makeLabel, inPlace = false, reso
     resize.observe(root);
     return {
         resources: { renderer, pmrem, environment },
+        status: () => ({ index: played, settled: !tweens.length && !refitPending }),
         step,
         goto(index) {
             reset();

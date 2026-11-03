@@ -95,6 +95,8 @@ export async function openStage({ image, title, onConsole }) {
     win.webContents.setFrameRate(30);
     if (onConsole) win.webContents.on("console-message", (event) => event.level !== "info" && onConsole(`${event.level}: ${event.message}`));
     const calls = new Map();
+    const steps = new Map();
+    let inkDone = 0;
     let count = 0;
     let markReady;
     const ready = new Promise((resolve) => (markReady = resolve));
@@ -105,8 +107,10 @@ export async function openStage({ image, title, onConsole }) {
             if (!pending) return;
             calls.delete(message.id);
             clearTimeout(pending.timer);
-            if (message.ok) pending.resolve(message.result);
-            else pending.reject(new Error(message.error || "Overlay error"));
+            if (message.ok) {
+                if (pending.method === "annotate") inkDone = Math.max(inkDone, Date.now() + (message.result?.duration ?? 0));
+                pending.resolve(message.result);
+            } else pending.reject(new Error(message.error || "Overlay error"));
         },
     });
     await win.loadURL("app://live/overlay/index.html");
@@ -116,14 +120,22 @@ export async function openStage({ image, title, onConsole }) {
     send("live:windows", [{ id: 1, page: pageTitle(title), x: 0, y: MENU_BAR, w: SCREEN.width, h: SCREEN.height - MENU_BAR }]);
     return {
         send,
+        annotationRemaining: () => Math.max(0, inkDone - Date.now()),
+        stepIndex: (id) => steps.get(id),
+        async status(id) {
+            const frames = win.webContents.mainFrame.framesInSubtree.filter((f) => f.url.includes("sandbox.html"));
+            const states = await Promise.all(frames.map((frame) => frame.executeJavaScript("globalThis.__inkEvalStageStatus?.()").catch(() => null)));
+            return states.find((state) => state?.panelId === id) ?? null;
+        },
         call(method, params = {}, timeoutMs = 10_000) {
             return new Promise((resolve, reject) => {
                 const id = ++count;
+                if ((method === "scene-step" || method === "scene-goto") && Number.isInteger(params.index)) steps.set(params.id, params.index);
                 const timer = setTimeout(() => {
                     calls.delete(id);
                     reject(new Error(`The overlay did not finish "${method}" in time`));
                 }, timeoutMs);
-                calls.set(id, { resolve, reject, timer });
+                calls.set(id, { resolve, reject, timer, method });
                 send("live:call", { id, method, params });
             });
         },

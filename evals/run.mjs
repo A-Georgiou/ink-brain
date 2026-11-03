@@ -1,5 +1,6 @@
 // Plays scenarios or compares recorded runs (npm run eval -- [--only id,id] [--category maths,3d] [--repeat 2] [--replay label] [--versus baseline,candidate]).
 import fs from "node:fs";
+import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -24,10 +25,14 @@ import { measureLayout } from "./layout.mjs";
 import { recordCheck } from "./learner.mjs";
 import { printReport, summarize } from "./report.mjs";
 import { SCENARIOS } from "./scenarios.mjs";
+import { awaitStage } from "./snapshot.mjs";
 import { openStage, SCREEN } from "./stage.mjs";
 import { PairJudge, pairSources, sourceId, summarizePairs } from "./versus.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+const measurement = createHash("sha256");
+for (const file of ["run.mjs", "stage.mjs", "snapshot.mjs", "judge.mjs", "scenarios.mjs", "aim.mjs", "board-audit.mjs", "conversation.mjs", "latency.mjs", "layout.mjs", "learner.mjs"]) measurement.update(fs.readFileSync(path.join(here, file)));
+const MEASUREMENT = measurement.digest("hex").slice(0, 12);
 const FIXTURES = path.join(here, "fixtures");
 const WORK = path.join(os.tmpdir(), "ink-brain-evals");
 const argv = process.argv.slice(2);
@@ -45,6 +50,8 @@ const VISUAL_CALLS = new Set(["annotate", "panel", "cutout", "image"]);
 const STREAM = !argv.includes("--no-stream");
 // Replays the tool calls recorded under that label instead of asking the model, to compare rendering alone.
 const REPLAY = option("replay", null);
+const REJUDGE_FROM = option("rejudge-from", null);
+if (REJUDGE_FROM && (!/^[\w.-]+$/.test(REJUDGE_FROM) || REJUDGE_FROM.startsWith(".") || REJUDGE_FROM === LABEL)) throw new Error("--rejudge-from needs a different, safe source label");
 const VERSUS = option("versus", null)?.split(",");
 const PAIR_SOURCES = VERSUS && pairSources(VERSUS.join(","));
 if (PAIR_SOURCES?.some((source) => source.attempt) && Number(option("repeat", 1)) !== 1) throw new Error("--versus label@attempt needs --repeat 1");
@@ -88,17 +95,26 @@ async function play(scenario, dir, { reader, client, replay = null, grid }) {
     const shots = [];
     let shotCount = 0;
     let turnNo = 1;
-    const snap = (tag, delay) => {
+    let activeStage = null;
+    const inkDelay = (minimum) => Math.min(8_000, Math.max(minimum, stage.annotationRemaining() + 150));
+    const snap = (tag, delay, stageId = null, index = null, complete = false) => {
         const label = many ? `turn ${turnNo} ${tag}` : tag;
         const file = `${String(++shotCount).padStart(2, "0")}-${label.replace(/\W+/g, "-")}.jpg`;
         shots.push(
-            sleep(delay).then(async () => {
+            (async () => {
+                let timing = null;
+                if (stageId) timing = await awaitStage(stage, stageId, index, { minimum: delay, complete });
+                else {
+                    await sleep(delay);
+                    if (stage.annotationRemaining()) timing = { reason: "drawing" };
+                }
                 const frame = await stage.frame().catch(() => null);
                 if (!frame) return;
                 fs.writeFileSync(path.join(dir, file), frame.jpeg);
-                record.frames.push({ file, tag: label, at: elapsed(), layout: frame.layout, boards: frame.boards });
+                const state = timing?.reason === "advanced" ? "transition into next step" : timing?.building ? "building preview" : timing?.reason === "capped" ? "still animating" : timing?.reason === "drawing" ? "still drawing" : null;
+                record.frames.push({ file, tag: state ? `${label} (${state})` : label, at: elapsed(), layout: frame.layout, boards: frame.boards, ...(timing ? { snapshot: timing.reason } : {}) });
                 if (frame.lost) record.glLost = true;
-            }),
+            })(),
         );
     };
     const crop = (region, png = false) => {
@@ -115,7 +131,7 @@ async function play(scenario, dir, { reader, client, replay = null, grid }) {
             turn.firstVisual ??= elapsed();
             if (record.firstVisual == null) {
                 record.firstVisual = elapsed();
-                snap("first visual", 2_000);
+                snap("first visual", inkDelay(2_000), method === "panel" && ["scene", "board"].includes(params.kind) ? params.id : null, null, true);
             }
         }
         return result;
@@ -195,11 +211,12 @@ async function play(scenario, dir, { reader, client, replay = null, grid }) {
         caption(event) {
             stage.send("live:explain", event);
             if (event.controls) record.controls = true;
+            if (event.type === "start") activeStage = event.scene;
             if (event.type !== "step") return;
             record.firstNarration ??= elapsed();
             record.captions.push(event.text);
             turn.captions.push(event.text);
-            snap(`step ${event.index + 1}`, 2_200);
+            snap(`step ${event.index + 1}`, inkDelay(activeStage ? 550 : 2_200), activeStage, activeStage ? stage.stepIndex(activeStage) : null);
         },
         keepSeconds: CONFIG.explanationTtlSeconds,
     });
@@ -210,7 +227,7 @@ async function play(scenario, dir, { reader, client, replay = null, grid }) {
         stage.send("live:activity", { name, origin: "Ink Brain" });
         const result = await surface.execute(name, args, "Ink Brain", callId).catch((error) => ({ text: `${name} failed: ${error.message}`, failed: true }));
         Object.assign(entry, { ms: elapsed() - entry.at, failed: Boolean(result.failed), result: String(result.text ?? "").slice(0, 600) });
-        if (VISUAL_TOOLS.has(name) && name !== "live_explain" && !result.failed) snap(name, 2_500);
+        if (VISUAL_TOOLS.has(name) && name !== "live_explain" && !result.failed) snap(name, inkDelay(2_500), name === "live_panel" && ["scene", "board"].includes(args.kind) ? result.id : null);
         return result;
     };
 
@@ -333,7 +350,7 @@ async function play(scenario, dir, { reader, client, replay = null, grid }) {
             stage.send("live:turn", { type: "end", id: turnNo, error: turn.error ?? undefined });
             stage.send("live:state", overlayState(false));
             await Promise.all(shots);
-            snap(index === asked.length - 1 ? "final" : "answered", 2_500);
+            snap(index === asked.length - 1 ? "final" : "answered", inkDelay(2_500), activeStage);
             await Promise.all(shots);
             if (error) break;
         }
@@ -455,7 +472,11 @@ async function evaluate(scenario, attempt, { reader, client, judge }) {
     const picture = nativeImage.createFromPath(path.join(FIXTURES, `${fixtureOf(scenario)}.jpg`));
     const grid = inkGrid({ ...picture.getSize(), data: picture.toBitmap() });
     let record;
-    if (argv.includes("--rejudge")) {
+    if (REJUDGE_FROM) {
+        fs.rmSync(dir, { recursive: true, force: true });
+        fs.cpSync(path.join(here, "results", REJUDGE_FROM, id), dir, { recursive: true });
+    }
+    if (argv.includes("--rejudge") || REJUDGE_FROM) {
         record = JSON.parse(fs.readFileSync(path.join(dir, "record.json"), "utf8"));
     } else {
         // A 3D panel that lost its WebGL context under the eval's load shows nothing, so that run is played again.
@@ -549,7 +570,7 @@ app.whenReady().then(async () => {
     // Re-running some scenarios into an existing label replaces just those.
     const summaryFile = path.join(OUT, "summary.json");
     const earlier = fs.existsSync(summaryFile) ? JSON.parse(fs.readFileSync(summaryFile, "utf8")).results.filter((r) => !results.some((n) => n.id === r.id)) : [];
-    const summary = summarize(LABEL, [...earlier, ...results], { model: CONFIG.model, effort: EFFORT, stream: STREAM, judge: JUDGE.models.join("+") });
+    const summary = summarize(LABEL, [...earlier, ...results], { model: CONFIG.model, effort: EFFORT, stream: STREAM, judge: JUDGE.models.join("+"), measurement: REJUDGE_FROM || argv.includes("--rejudge") ? null : MEASUREMENT, ...(REJUDGE_FROM ? { rejudgedFrom: REJUDGE_FROM } : {}), ...(REPLAY ? { replayedFrom: REPLAY } : {}) });
     fs.writeFileSync(summaryFile, JSON.stringify(summary, null, 1));
     printReport([summary]);
     await client.stop();

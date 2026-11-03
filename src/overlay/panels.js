@@ -96,6 +96,7 @@ export class Panels {
     async show({ id, kind, title, content, rect = {}, frameless = false, image = null, building = false }) {
         const isNew = !this.#panels.has(id);
         const panel = this.#open(id, kind, title, frameless);
+        panel.building = building;
         if (building) panel.el.querySelector(".panel-kind").textContent = "Building";
         panel.step = null;
         panel.added = [];
@@ -408,7 +409,7 @@ export class Panels {
             const timer = setTimeout(() => finish({ ok: true, note: "still rendering" }), 15_000);
             panel.pending = { kind, content, image, renderId, finish };
             if (reuse) {
-                panel.frame.contentWindow.postMessage({ kind, content, image, renderId, inPlace: panel.el.classList.contains("frameless") }, "*");
+                panel.frame.contentWindow.postMessage({ kind, content, image, renderId, panelId: panel.id, building: panel.building, inPlace: panel.el.classList.contains("frameless") }, "*");
                 if (Number.isFinite(panel.inset)) panel.frame.contentWindow.postMessage({ type: "inset", px: panel.inset }, "*");
             }
         });
@@ -426,7 +427,7 @@ export class Panels {
         const data = event.data;
         if (!panel || !data || typeof data !== "object") return;
         if (data.type === "ready" && panel.pending) {
-            event.source.postMessage({ kind: panel.pending.kind, content: panel.pending.content, image: panel.pending.image, renderId: panel.pending.renderId, inPlace: panel.el.classList.contains("frameless") }, "*");
+            event.source.postMessage({ kind: panel.pending.kind, content: panel.pending.content, image: panel.pending.image, renderId: panel.pending.renderId, panelId: panel.id, building: panel.building, inPlace: panel.el.classList.contains("frameless") }, "*");
             if (panel.added?.length) event.source.postMessage({ type: "steps", steps: panel.added }, "*");
             if (Number.isInteger(panel.step)) event.source.postMessage({ type: "step", index: panel.step }, "*");
             if (Number.isFinite(panel.inset)) event.source.postMessage({ type: "inset", px: panel.inset }, "*");

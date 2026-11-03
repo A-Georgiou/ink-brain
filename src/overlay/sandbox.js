@@ -6,10 +6,13 @@ let stage = null;
 let pendingStep = -1;
 let pendingSteps = [];
 let pendingInset = null;
+let panelId = null;
+let building = false;
 let rendering = Promise.resolve();
 
 const report = (message) => parent.postMessage(message, "*");
 const describe = (error) => String(error?.message ?? error).slice(0, 2000);
+globalThis.__inkEvalStageStatus = () => ({ panelId, building, ...(stage?.status?.() ?? { index: -1, settled: false }) });
 
 addEventListener("error", (event) => report({ type: "error", message: describe(event.error ?? event.message) }));
 addEventListener("unhandledrejection", (event) => report({ type: "error", message: describe(event.reason) }));
@@ -45,6 +48,8 @@ addEventListener("message", (event) => {
 
 async function render(data) {
     const { kind, content, image, renderId } = data;
+    panelId = data.panelId ?? null;
+    building = Boolean(data.building);
     const inPlace = data.inPlace === true;
     const imageUrl = typeof image === "string" && image.startsWith("data:image/") ? image : null;
     const previous = stage;

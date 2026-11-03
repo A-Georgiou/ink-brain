@@ -950,6 +950,7 @@ function build(spec, world, katex) {
 
     return {
         bounds,
+        status: () => ({ index: played, settled: !tweens.length && settle <= 0 && !easing }),
         step(index) {
             if (!Number.isInteger(index) || index <= played || index >= steps.length) return;
             for (let i = played + 1; i <= index; i++) for (const action of Array.isArray(steps[i]) ? steps[i] : []) act(action ?? {}, i < index);
@@ -1059,6 +1060,7 @@ export async function renderBoard(spec, { root }) {
     resize.observe(root);
     return {
         step: (index) => board.step(index),
+        status: () => board.status(),
         // Replay and step-back rebuild to that step, because a board only plays forward.
         goto(index) {
             board.dispose();

@@ -4,11 +4,13 @@ import { aimAt, drawnShapes } from "../evals/aim.mjs";
 import { auditBoard } from "../evals/board-audit.mjs";
 import { conversationMetrics, marksFor, pickFrames, turnsOf } from "../evals/conversation.mjs";
 import { elementsAt, snapOnto } from "../evals/elements.mjs";
+import { checkMeasurement, integrationReport, printIntegration } from "../evals/integration.mjs";
 import { judgeDisagreement, limitsFor, overall, passes } from "../evals/judge.mjs";
 import { latencyMetrics, replayTimeline } from "../evals/latency.mjs";
 import { measureLayout } from "../evals/layout.mjs";
 import { scriptedAnswer } from "../evals/learner.mjs";
 import { compareRuns, sameCodeControl } from "../evals/stats.mjs";
+import { awaitStage } from "../evals/snapshot.mjs";
 import { PairJudge, pairOutcome, pairPrompt, pairSources, sourceId, summarizePairs } from "../evals/versus.mjs";
 
 const run = (category, metrics = {}, tools = [], scenario = {}) => ({
@@ -82,6 +84,54 @@ test("same-code controls split attempts by scenario, excluding incomplete pairs"
     assert.equal(control.scenarios, 2);
     assert.equal(control.delta, 1);
     assert.deepEqual(control.interval, [1, 1]);
+});
+
+test("integration decisions pair categories, latency and pass rates on the same scenarios", () => {
+    const result = (scenario, category, score, pass, firstWords, attempt = 1) => ({
+        id: attempt > 1 ? `${scenario}~${attempt}` : scenario,
+        scenario,
+        category,
+        score,
+        pass,
+        metrics: { firstWords, firstVisual: firstWords + 200, total: firstWords + 500 },
+    });
+    const baseline = [
+        result("model", "3d", 3, false, 3000), result("model", "3d", 3, false, 3200, 2),
+        result("figure", "3d", 3, false, 3000), result("figure", "3d", 3, false, 3200, 2),
+        result("other", "maths", 4, true, 1000),
+    ];
+    const candidate = [
+        result("model", "3d", 4, true, 2000), result("model", "3d", 4, true, 2200, 2),
+        result("figure", "3d", 2, false, 2000), result("figure", "3d", 2, false, 2200, 2),
+        result("new", "maths", 5, true, 500),
+    ];
+    candidate[2].metrics.firstVisual = null;
+    candidate[3].metrics.firstVisual = null;
+    const report = integrationReport(candidate, baseline, { controls: { baseline }, bootstrap: 200 });
+    assert.deepEqual(report.categories.map((row) => row.category), ["3d"]);
+    assert.equal(report.overall.score.scenarios, 2);
+    assert.deepEqual([report.overall.score.delta, report.overall.firstWords.delta, report.overall.pass.delta], [0, -1000, 0.5]);
+    assert.deepEqual([report.regressions[0].id, report.improvements[0].id], ["figure", "model"]);
+    assert.deepEqual(report.nulls[0].score.interval, [0, 0]);
+    const lines = [];
+    const original = console.log;
+    try {
+        console.log = (line) => lines.push(line);
+        printIntegration(report, "candidate", "baseline");
+    } finally {
+        console.log = original;
+    }
+    assert.match(lines.join("\n"), /first words -1\.00s \[-1\.10s, -0\.90s\]/);
+    assert.match(lines.join("\n"), /first visual -1\.00s \[insufficient scenarios\] \(1 paired\)/);
+    assert.match(lines.join("\n"), /Null controls.*baseline: score \+0\.00 \[\+0\.00, \+0\.00\]/s);
+});
+
+test("integration reports refuse known judge or harness mismatches", () => {
+    const base = { judge: "gpt+claude", measurement: "v1" };
+    assert.equal(checkMeasurement([base, { ...base }]), null);
+    assert.match(checkMeasurement([base, { ...base, measurement: null }]), /not recorded/);
+    assert.throws(() => checkMeasurement([base, { ...base, measurement: "v2" }]), /measurement code differs/);
+    assert.throws(() => checkMeasurement([base, { ...base, judge: "gpt" }]), /judge models differ/);
 });
 
 test("paired stats can compare unjudged deterministic metrics", () => {
@@ -207,6 +257,30 @@ test("stream replays keep text, argument deltas and their matching tool call in 
     const tool = { id: "c1", name: "live_explain", at: 30, args: {} };
     const timeline = [{ kind: "input", at: 20, id: "c1", delta: "{}" }, { kind: "text", at: 10, text: "Look" }];
     assert.deepEqual(replayTimeline({ timeline, tools: [tool] }), [timeline[1], timeline[0], { kind: "tool", at: 30, tool }]);
+});
+
+test("step snapshots wait for the requested stage to finish rather than a fixed delay", async () => {
+    let time = 0;
+    const stage = {
+        stepIndex: () => 2,
+        async status() {
+            return time < 350 ? { index: 1, settled: true } : time < 550 ? { index: 2, settled: false } : { index: 2, settled: true };
+        },
+    };
+    const options = { minimum: 250, poll: 100, now: () => time, sleep: async (ms) => (time += ms) };
+    assert.deepEqual(await awaitStage(stage, "board", 2, options), { reason: "settled", ms: 550 });
+    time = 0;
+    stage.stepIndex = () => (time < 350 ? 2 : 3);
+    stage.status = async () => ({ index: 2, settled: false });
+    assert.deepEqual(await awaitStage(stage, "board", 2, options), { reason: "advanced", ms: 350 });
+    time = 0;
+    stage.stepIndex = () => 2;
+    assert.deepEqual(await awaitStage(stage, "board", 2, { ...options, limit: 600 }), { reason: "capped", ms: 600 });
+    time = 0;
+    stage.status = async () => ({ index: 2, settled: true, building: time < 450 });
+    assert.deepEqual(await awaitStage(stage, "board", null, { ...options, complete: true }), { reason: "settled", ms: 450 });
+    const hanging = { stepIndex: () => 2, status: () => new Promise(() => {}) };
+    assert.equal((await awaitStage(hanging, "board", 2, { minimum: 0, limit: 30, poll: 5 })).reason, "capped");
 });
 
 test("diagram checks find overlapping nodes, overflowing box text and edges crossing unrelated content", () => {

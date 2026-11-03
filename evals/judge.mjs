@@ -40,6 +40,10 @@ CRITERIA["pointing-hard"] = CRITERIA.pointing;
 const SYSTEM = `You grade Ink Brain, an AI tutor that lives on top of the user's screen. It answers out loud, draws on the screen and opens panels with narrated 2D motion graphics (boards), 3D models (scenes), diagrams and live demos.
 You see exactly what the user saw and read what they heard. Grade strictly, like a demanding teacher and product designer deciding whether this is ready to ship:
 - Judge the experience, not the intent. A point counts only if it was said or shown, and a visual only helps if it is legible and shows what was asked about. Good narration does not rescue a visual that fails.
+- Check drawn numbers, directions and mechanisms for factual errors as carefully as spoken claims; if a picture contradicts the explanation, that can be a major error.
+- Inspect the opening, middle and final images for legibility and obstruction of both the circled target and what the user was reading. A sparse opening that progressively reveals content is not itself a layout blemish; actual clipping, overlap and obstruction in any frame still count.
+- List each distinct mistake or visual defect separately, even when two wrong numbers or flaws appear in the same image. Say if a flaw persists across frames rather than repeating that same flaw; do not treat missing visual teaching as a second legibility defect when fit, completeness or the category's core criterion already captures it.
+- The reference describes the original page, not necessarily every linked page read later. An unverified detail is not automatically false: identify the specific contradictory evidence before calling it a factual error; use grounding for source claims you cannot verify.
 - 5 is excellent with nothing important to improve, and rare. 4 is good with only small flaws. 3 is acceptable but clearly flawed. 2 is poor. 1 failed.
 - When torn between two scores, give the lower one.
 Reply with JSON only.`;
@@ -101,17 +105,17 @@ function promptFor({ scenario, meta, record, metrics, reference, frames }) {
     lines.push(`Automatic checks: ${checks.join("; ")}.`);
     if (!record.turns && record.error) lines.push(`The turn ended with an error: ${record.error}`);
     if (reference) lines.push("", "# Reference", "The source the answer should draw on, for checking facts:", reference.slice(0, 9_000));
-    lines.push("", "# Images", `Image 1 is the user's screen when they ${record.turns ? "first " : ""}asked. Images 2 to ${frames.length + 1} are their screen afterwards, in order: ${frames.map((f, i) => `${i + 2} ${f.tag} at ${seconds(f.at)}`).join(", ") || "none"}.`);
+    lines.push("", "# Images", `Image 1 is the user's screen when they ${record.turns ? "first " : ""}asked. Images 2 to ${frames.length + 1} are sampled moments of their screen afterwards, in order: ${frames.map((f, i) => `${i + 2} ${f.tag} at ${seconds(f.at)}`).join(", ") || "none"}. Only credit a visual point if the supplied images show it; a building preview is incomplete but its actual legibility and obstruction still count, and a step still animating at the snapshot cap is part of the experience.`);
     lines.push(
         "",
         "# Grading",
         "Speed is measured separately, so do not score it. Collect the evidence first:",
         "- points: one entry per key point, in order: whether it was said (aloud, in the bubble or in a narrated step) and whether a visual showed it, each yes, partly or no, with where in a few words.",
-        "- errors: every mistake, wrong label or invented detail; major if it would mislead the user or break what they are doing, otherwise minor.",
-        "- defects: every visual problem in images 2 onwards; major for a blank, broken or unreadable visual, otherwise minor. How much Ink Brain hides of what the user circled is measured automatically.",
+        "- errors: every distinct mistake, wrong label or invented detail; separate independently wrong facts, even if they occur in one image. Quote the exact claim or visible label and what in the source or image contradicts it. A wrong central number, link, direction or mechanism is major if it would mislead the user; otherwise minor.",
+        "- defects: every distinct visual problem in images 2 onwards; cite its image and what is obscured, clipped, overlapping, too small or difficult to read. A broken or unreadable visual is major; otherwise minor. How much Ink Brain hides of what the user circled is measured automatically.",
         "Then score each criterion from 1 to 5:",
         ...Object.entries(criteria).map(([key, text]) => `- ${key}: ${text}`),
-        `Return {"points": [{"said": "yes|partly|no", "shown": "yes|partly|no", "where": "..."}], "errors": [{"severity": "major|minor", "what": "..."}], "defects": [{"severity": "major|minor", "image": 2, "what": "..."}], "scores": {${Object.keys(criteria).map((key) => `"${key}": n`).join(", ")}}, "issues": ["the most important specific problems, at most five"], "summary": "one sentence"}.`,
+        `Return {"points": [{"said": "yes|partly|no", "shown": "yes|partly|no", "where": "..."}], "errors": [{"severity": "major|minor", "what": "..."}], "defects": [{"severity": "major|minor", "image": 2, "what": "..."}], "scores": {${Object.keys(criteria).map((key) => `"${key}": n`).join(", ")}}, "evidence": {${Object.keys(criteria).map((key) => `"${key}": "specific quote, image and reason for score"`).join(", ")}}, "issues": ["the most important specific problems, at most five"], "summary": "one sentence"}.`,
     );
     return lines.join("\n");
 }
@@ -213,7 +217,7 @@ export class Judge {
             const given = Object.fromEntries(keys.map((key) => [key, Math.min(5, Math.max(1, Math.round(Number(json.scores[key]))))]));
             const limits = limitsFor(input, json);
             const scores = Object.fromEntries(keys.map((key) => [key, Math.min(given[key], ...limits.filter((l) => l.key === key).map((l) => l.max))]));
-            return { model, scores, given, limits, points: json.points, errors: json.errors ?? [], defects: json.defects ?? [], issues: json.issues ?? [], summary: json.summary ?? "" };
+            return { model, scores, given, limits, points: json.points, errors: json.errors ?? [], defects: json.defects ?? [], evidence: json.evidence ?? {}, issues: json.issues ?? [], summary: json.summary ?? "" };
         } finally {
             await session.disconnect().catch(() => {});
             await this.client.deleteSession(session.sessionId).catch(() => {});
