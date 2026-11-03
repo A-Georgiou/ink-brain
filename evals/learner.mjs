@@ -6,7 +6,7 @@ export function scriptedAnswer(scenario, check, asked = 0) {
     const steps = Array.isArray(scenario?.learner) ? scenario.learner : [];
     const step = steps[asked] ?? steps.at(-1) ?? { pick: "wrong" };
     const choices = Array.isArray(check?.choices) ? check.choices : [];
-    if (step.say) {
+    if (step.say && step.pick !== "wrong") {
         const matched = matchChoice(choices, step.say);
         return matched ? { id: matched.id, label: matched.label, via: "voice" } : { id: null, label: String(step.say), via: "voice", say: String(step.say) };
     }
@@ -15,8 +15,10 @@ export function scriptedAnswer(scenario, check, asked = 0) {
         return choice ? { id: choice.id, label: choice.label, via: "click" } : null;
     }
     const wanted = step.match instanceof RegExp ? step.match : null;
-    const wrong = choices.filter((item) => !item.correct);
-    const choice = (wanted && wrong.find((item) => wanted.test(`${item.label} ${item.misconception ?? ""}`))) || wrong[0] || choices[0];
+    const key = (item) => `${item.label} ${item.misconception ?? ""}`.toLowerCase();
+    const wrong = choices.filter((item) => !item.correct).sort((a, b) => key(a).localeCompare(key(b)));
+    const choice = wanted ? wrong.find((item) => { wanted.lastIndex = 0; return wanted.test(item.label); }) : wrong[0] ?? [...choices].sort((a, b) => key(a).localeCompare(key(b)))[0];
+    if (!choice && step.say) return { id: null, label: String(step.say), via: "voice", say: String(step.say) };
     return choice ? { id: choice.id, label: choice.label, via: "click" } : null;
 }
 

@@ -11,6 +11,7 @@ import { Judge, judgeDisagreement, limitsFor, overall, passes } from "../evals/j
 import { latencyMetrics, replayTimeline } from "../evals/latency.mjs";
 import { measureLayout } from "../evals/layout.mjs";
 import { scriptedAnswer } from "../evals/learner.mjs";
+import { SCENARIOS } from "../evals/scenarios.mjs";
 import { comparableReplayRun, compareRuns, sameCodeControl } from "../evals/stats.mjs";
 import { awaitStage } from "../evals/snapshot.mjs";
 import { PairJudge, pairOutcome, pairPrompt, pairSources, sourceId, summarizePairs } from "../evals/versus.mjs";
@@ -56,6 +57,30 @@ test("the scripted learner picks a wrong choice, or speaks a guess that matches 
     assert.equal(scriptedAnswer({ learner: [{ pick: "right" }] }, check, 0).id, "c2");
     assert.equal(scriptedAnswer({ learner: [{ say: "it lands on zero" }] }, check, 0).via, "voice");
     assert.equal(scriptedAnswer({ learner: [{ say: "about 99 percent" }] }, check, 0).id, "c1");
+});
+
+test("the scripted misconception survives shuffled choices and missing distractors", () => {
+    const bayes = SCENARIOS.find((scenario) => scenario.id === "tutor-bayes");
+    const options = [
+        { label: "About 1%", correct: false, misconception: "ignores the 99% test accuracy" },
+        { label: "About 99%", correct: false, misconception: "ignores the base rate" },
+        { label: "Much lower", correct: true },
+    ];
+    const check = (choices) => ({ choices: choices.map((choice, index) => ({ ...choice, id: `c${index + 1}` })) });
+    for (const choices of [options, [...options].reverse()]) {
+        const answer = scriptedAnswer(bayes, check(choices));
+        assert.equal(answer.label, "About 99%");
+        assert.equal(answer.id, `c${choices.findIndex((choice) => choice.label === answer.label) + 1}`);
+    }
+    assert.deepEqual(scriptedAnswer(bayes, check(options.filter((choice) => choice.label !== "About 99%"))), { id: null, label: "About 99%", via: "voice", say: "About 99%" });
+    const generic = { learner: [{ pick: "wrong" }] };
+    assert.equal(scriptedAnswer(generic, check(options)).label, scriptedAnswer(generic, check([...options].reverse())).label);
+    const global = { learner: [{ pick: "wrong", match: /99%/g, say: "About 99%" }] };
+    assert.equal(scriptedAnswer(global, check(options)).label, scriptedAnswer(global, check([...options].reverse())).label);
+    const determinant = SCENARIOS.find((scenario) => scenario.id === "tutor-determinant");
+    const area = [{ label: "No area because the sign is negative", correct: false }, { label: "Area triples and orientation flips", correct: true }, { label: "Orientation stays the same", correct: false }];
+    assert.equal(scriptedAnswer(determinant, check([...area].reverse())).label, "No area because the sign is negative");
+    assert.equal(scriptedAnswer(determinant, check(area.slice(1))).label, "The shape has no area.");
 });
 
 test("one weak criterion sinks the overall score and the pass", () => {

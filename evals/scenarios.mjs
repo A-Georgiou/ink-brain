@@ -729,7 +729,7 @@ export const SCENARIOS = [
         locate: () => globalThis.$ink.math("P(A\\vert B)={\\frac"),
         ask: "Teach me this, then check I understand before you give the punchline. Ask me what a 99% accurate test means for a rare disease, and if I get it wrong tell me exactly where my reasoning fails.",
         expect: ["board"],
-        learner: [{ pick: "wrong" }],
+        learner: [{ pick: "wrong", match: /99\s*(?:%|percent)/i, say: "About 99%" }],
         points: [
             "it asks the learner to predict the chance of the disease given a positive test before stating that result",
             "a wrong answer that treats the test accuracy as the chance of having the disease is named as a base-rate mistake, not just marked wrong",
@@ -744,7 +744,7 @@ export const SCENARIOS = [
         locate: () => globalThis.$ink.math("L=\\lim _{h\\to 0}"),
         ask: "Explain what this limit is doing, but before you say what it becomes, ask me to predict what happens to the secant as h shrinks. If I predict wrong, name the mistake and then show the right picture.",
         expect: ["board"],
-        learner: [{ pick: "wrong" }],
+        learner: [{ pick: "wrong", match: /horizontal|flat|slope.{0,20}(?:zero|vanish|\b0\b)/i, say: "The secant becomes horizontal as h shrinks." }],
         points: [
             "it sets up the secant slope (f(a+h) - f(a))/h and asks what happens as h shrinks before stating the result",
             "a wrong prediction (the slope vanishes, or the fraction is undefined at zero) is corrected as that specific mistake",
@@ -759,7 +759,7 @@ export const SCENARIOS = [
         locate: () => globalThis.$ink.math("\\pm {\\sqrt {b^{2}-4ac}}"),
         ask: "Show me where the quadratic formula comes from with one worked example, then give me a practice check on what the plus or minus is doing. Correct the specific mistake if I miss it.",
         expect: ["board"],
-        learner: [{ pick: "wrong" }],
+        learner: [{ pick: "wrong", match: /\bonly\b|just one|single (?:root|solution)/i, say: "Only the plus branch gives a solution." }],
         points: [
             "a worked completion of the square comes before the practice question",
             "the practice question asks what the plus or minus is doing, and a wrong answer is tied to the mistake behind that choice",
@@ -774,7 +774,7 @@ export const SCENARIOS = [
         locate: () => globalThis.$ink.math("&=ad-bc"),
         ask: "Teach me what this number represents, then ask me to predict what a negative value does to the shape. I want to answer before you tell me.",
         expect: ["board"],
-        learner: [{ pick: "wrong" }],
+        learner: [{ pick: "wrong", match: /no area|area.{0,20}(?:smaller|shrink|decrease|disappear|zero|gone)/i, say: "The shape has no area." }],
         points: [
             "it shows the determinant as an area scale factor, then asks what a negative value does before saying so",
             "a wrong prediction (smaller area, or no area) is answered as that misconception",
