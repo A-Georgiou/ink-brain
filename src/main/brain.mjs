@@ -4,11 +4,20 @@ import fs from "node:fs";
 import path from "node:path";
 
 const FALLBACK_MODELS = ["gpt-6.1-terra", "claude-opus-5.5", "claude-sonnet-5.5", "gpt-6.1-sol", "claude-haiku-5.5"];
+// Automatic model selection, the only choice on Copilot Free and Student.
+const AUTO = "auto";
 // Models whose best balance of speed and quality in the evals is not low effort.
 const EFFORTS = { "gpt-6.1-terra": "medium" };
 
-// The configured reasoning effort, or the one the evals found best for this model.
-export const effortFor = (model, configured) => configured ?? EFFORTS[model] ?? "low";
+// The configured reasoning effort, or the one the evals found best for this model; Auto rejects any effort.
+export const effortFor = (model, configured) => (model === AUTO ? undefined : (configured ?? EFFORTS[model] ?? "low"));
+
+// The wanted model if this account can use it with images, else a fallback, else Auto.
+export function chooseModel(models, wanted) {
+    const vision = models.filter((model) => model.capabilities?.supports?.vision && model.policy?.state !== "disabled").map((model) => model.id);
+    if (wanted === AUTO || vision.includes(wanted)) return wanted;
+    return FALLBACK_MODELS.find((id) => vision.includes(id)) ?? vision[0] ?? AUTO;
+}
 
 // Emits delta(text), message(text), preparing({ name }), input({ id, name, delta }), tool({ name }), idle() and error(Error).
 export class EmbeddedBrain extends EventEmitter {
@@ -96,13 +105,10 @@ export class EmbeddedBrain extends EventEmitter {
     }
 
     async #pickModel() {
-        const wanted = this.config.model;
         try {
-            const vision = (await this.#client.listModels()).filter((model) => model.capabilities?.supports?.vision).map((model) => model.id);
-            if (vision.includes(wanted)) return wanted;
-            return FALLBACK_MODELS.find((id) => vision.includes(id)) ?? vision[0] ?? wanted;
+            return chooseModel(await this.#client.listModels(), this.config.model);
         } catch {
-            return wanted;
+            return this.config.model;
         }
     }
 

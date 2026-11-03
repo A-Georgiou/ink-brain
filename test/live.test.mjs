@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { ToolCalls } from "../src/main/brain.mjs";
+import { ToolCalls, chooseModel, effortFor } from "../src/main/brain.mjs";
 import { Controller } from "../src/main/control.mjs";
 import { ExplainPlayer } from "../src/main/explain.mjs";
 import { createCheckWaiter, describeAnswer, normalizeCheck, validateCheck } from "../src/main/tutor.mjs";
@@ -12,6 +12,17 @@ import { clearStaleGrants } from "../src/main/helper.mjs";
 import { readImageFile } from "../src/main/images.mjs";
 import { Voice } from "../src/main/voice.mjs";
 import { ArgumentStream } from "../src/shared/stream.mjs";
+
+test("the model falls back to one the account can use, and to Auto on Auto-only plans", () => {
+    const model = (id, state = "enabled") => ({ id, capabilities: { supports: { vision: true } }, policy: { state } });
+    const auto = { id: "auto", capabilities: { supports: {} } };
+
+    assert.equal(chooseModel([model("gpt-6.1-terra"), auto], "gpt-6.1-terra"), "gpt-6.1-terra");
+    assert.equal(chooseModel([model("gpt-6.1-terra", "disabled"), model("claude-opus-5.5"), auto], "gpt-6.1-terra"), "claude-opus-5.5");
+    assert.equal(chooseModel([auto], "gpt-6.1-terra"), "auto");
+    assert.equal(chooseModel([model("gpt-6.1-terra"), auto], "auto"), "auto");
+    assert.equal(effortFor("auto", "high"), undefined);
+});
 
 test("images can only be read from Copilot's own image folders", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "ink-brain-images-"));
