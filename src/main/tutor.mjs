@@ -46,18 +46,21 @@ function overlap(said, label) {
 }
 
 // What the model should do with the learner's answer. The misconception is for the model, not shown as the reveal.
-export function describeAnswer(check, answer) {
+export function describeAnswer(check, answer, stageId = null) {
     const right = check.choices.find((choice) => choice.correct);
     const rightLabel = right?.label ?? "the correct choice";
     const said = String(answer?.say || answer?.label || "").trim();
-    if (!answer || (!answer.id && !said)) return "The learner did not answer. Give one short hint that names the idea to use, then reveal the right answer.";
+    const visual = stageId
+        ? ` Then call live_explain with id "${stageId}" (steps only, no new board or scene) to visibly show the reveal on the stage already on screen, hiding or transforming any pre-check labels it replaces.`
+        : "";
+    if (!answer || (!answer.id && !said)) return `The learner did not answer. Give one short hint that names the idea to use, then reveal the right answer.${visual}`;
     const choice = answer.id ? check.choices.find((item) => item.id === answer.id) : null;
-    if (choice?.correct) return `The learner chose "${choice.label}", which is right. Confirm it in one sentence, then show why it is right.`;
+    if (choice?.correct) return `The learner chose "${choice.label}", which is right. Confirm it in one sentence, then show why it is right.${visual}`;
     if (choice) {
         const why = choice.misconception || "they picked a plausible but incorrect idea";
-        return `The learner chose "${choice.label}", which is wrong. Misconception: ${why}. Address that specific mistake in your own words, then reveal the right answer ("${rightLabel}"). Do not just say try again.`;
+        return `The learner chose "${choice.label}", which is wrong. Misconception: ${why}. Explicitly name that specific mistake in your own words, then reveal the right answer ("${rightLabel}").${visual} Do not just say try again.`;
     }
-    return `The learner said "${said}", which is not one of the choices. Treat it as their prediction. If it is wrong, name the specific mix-up, then reveal the right answer ("${rightLabel}").`;
+    return `The learner said "${said}", which is not one of the choices. Treat it as their prediction. If it is wrong, explicitly name the specific mix-up, then reveal the right answer ("${rightLabel}").${visual}`;
 }
 
 // Shows a check and resolves when the learner clicks or speaks, or when the wait times out.

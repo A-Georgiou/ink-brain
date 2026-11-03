@@ -422,7 +422,9 @@ test("a check names the misconception behind a spoken wrong answer", async () =>
     const pending = waiter.ask(check);
     await tick();
     assert.equal(waiter.answerText("it lands on zero"), true);
-    assert.match(describeAnswer(check, await pending), /origin/);
+    const ans = await pending;
+    assert.match(describeAnswer(check, ans), /origin/);
+    assert.match(describeAnswer(check, ans, "explain-1-board"), /explain-1-board/);
 });
 
 test("interrupting an explanation stops it and reports how far it got", async () => {

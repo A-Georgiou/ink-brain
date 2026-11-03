@@ -187,7 +187,8 @@ export class Surface {
         if (!this.askCheck) return { text: "Checking understanding is not available right now.", failed: true };
         const check = normalizeCheck(args);
         const answer = await this.askCheck(check);
-        return { text: describeAnswer(check, answer) };
+        const stage = [...this.#shown].reverse().find(([, p]) => p.kind === "board" || p.kind === "scene")?.[0] ?? null;
+        return { text: describeAnswer(check, answer, stage) };
     }
 
     // Adds narrated steps to a stage already on screen, from step first on; board transforms whose TeX fails are dropped.
