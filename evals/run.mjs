@@ -1,4 +1,4 @@
-// Plays scenarios through Ink Brain's own brain, tools and overlay, and a judge scores what the user saw (npm run eval -- [--only id,id] [--category maths,3d] [--repeat 2] [--replay label]).
+// Plays scenarios or compares recorded runs (npm run eval -- [--only id,id] [--category maths,3d] [--repeat 2] [--replay label] [--versus baseline,candidate]).
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -19,6 +19,7 @@ import { measureLayout } from "./layout.mjs";
 import { printReport, summarize } from "./report.mjs";
 import { SCENARIOS } from "./scenarios.mjs";
 import { openStage, SCREEN } from "./stage.mjs";
+import { PairJudge, summarizePairs } from "./versus.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURES = path.join(here, "fixtures");
@@ -38,6 +39,8 @@ const VISUAL_CALLS = new Set(["annotate", "panel", "cutout", "image"]);
 const STREAM = !argv.includes("--no-stream");
 // Replays the tool calls recorded under that label instead of asking the model, to compare rendering alone.
 const REPLAY = option("replay", null);
+const VERSUS = option("versus", null)?.split(",");
+if (VERSUS && (VERSUS.length !== 2 || VERSUS.some((label) => !/^[\w.-]+$/.test(label) || label.startsWith(".")))) throw new Error("--versus needs two existing labels: --versus baseline,candidate");
 const TURN_TIMEOUT_MS = 8 * 60_000;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -300,6 +303,42 @@ function pick(frames, max = 10) {
     return Array.from({ length: max }, (_, i) => frames[Math.round(i * step)]);
 }
 
+function storedRun(label, id, scenario, meta) {
+    const dir = path.join(here, "results", label, id);
+    const record = JSON.parse(fs.readFileSync(path.join(dir, "record.json"), "utf8"));
+    const screen = path.join(dir, "00-screen.jpg");
+    const frames = pick(record.frames, 5).map((frame) => ({ ...frame, path: path.join(dir, frame.file) }));
+    if (!fs.existsSync(screen) || frames.some((frame) => !fs.existsSync(frame.path))) throw new Error(`${label}/${id} is missing a screenshot`);
+    return { screen, record, frames, metrics: measure(scenario, meta, record) };
+}
+
+async function evaluatePair(scenario, attempt, pairJudge) {
+    const id = attempt > 1 ? `${scenario.id}~${attempt}` : scenario.id;
+    let verdict;
+    try {
+        const meta = JSON.parse(fs.readFileSync(path.join(FIXTURES, `${scenario.id}.json`), "utf8"));
+        const [left, right] = VERSUS.map((label) => storedRun(label, id, scenario, meta));
+        if (!fs.readFileSync(left.screen).equals(fs.readFileSync(right.screen))) throw new Error(`${id} used different starting screens`);
+        const referenceFile = path.join(FIXTURES, `${scenario.id}.reference.txt`);
+        verdict = await pairJudge.compare({
+            scenario,
+            meta,
+            reference: fs.existsSync(referenceFile) ? fs.readFileSync(referenceFile, "utf8") : null,
+            screen: left.screen,
+            left,
+            right,
+        });
+    } catch (error) {
+        verdict = { judgeError: error.message };
+    }
+    const result = { id, scenario: scenario.id, category: scenario.category, ...verdict };
+    const dir = path.join(OUT, id);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "pairwise.json"), JSON.stringify(result, null, 1));
+    console.log(`${id.padEnd(18)} ${verdict.winner ?? "error"} ${verdict.preference ?? ""} ${verdict.judgeError ?? ""}`);
+    return result;
+}
+
 async function evaluate(scenario, attempt, { reader, client, judge }) {
     const id = attempt > 1 ? `${scenario.id}~${attempt}` : scenario.id;
     const dir = path.join(OUT, id);
@@ -377,6 +416,18 @@ app.whenReady().then(async () => {
     const categories = option("category", "").split(",").filter(Boolean);
     const chosen = SCENARIOS.filter((s) => (!only.length || only.includes(s.id)) && (!categories.length || categories.includes(s.category)));
     const jobs = chosen.flatMap((scenario) => Array.from({ length: Number(option("repeat", 1)) }, (_, i) => [scenario, i + 1]));
+    if (VERSUS) {
+        if (!judge) throw new Error("--versus requires the judge");
+        console.log(`Pairwise ${LABEL}: ${jobs.length} recorded pairs, ${VERSUS.join(" vs ")}, ${JUDGE.models.join(" and ")} in both orders`);
+        const pairJudge = new PairJudge({ client, ...JUDGE, workspace: WORK, disabledMcpServers: [...mcp, "github-mcp-server"] });
+        const results = await pool(jobs, Number(option("parallel", 4)), ([scenario, attempt]) => evaluatePair(scenario, attempt, pairJudge));
+        const summary = { ...summarizePairs(results, VERSUS), at: new Date().toISOString(), results };
+        fs.writeFileSync(path.join(OUT, "pairwise-summary.json"), JSON.stringify(summary, null, 1));
+        console.log(`Pairwise ${LABEL}: ${summary.scored}/${summary.runs} judged, ${summary.wins ?? 0}/${summary.ties ?? 0}/${summary.losses ?? 0} candidate wins/ties/losses, preference ${summary.preference?.toFixed(2) ?? "-"}, 95% CI ${summary.interval?.map((x) => x.toFixed(2)).join(" to ") ?? "-"}, order disagreements ${summary.orderDisagreements ?? 0}`);
+        await client.stop();
+        app.quit();
+        return;
+    }
     console.log(`Eval ${LABEL}: ${jobs.length} runs of ${CONFIG.model} (${EFFORT}${STREAM ? "" : ", not streamed"}), judged by ${judge ? JUDGE.models.join(" and ") : "nobody"}`);
     const results = await pool(jobs, Number(option("parallel", 4)), ([scenario, attempt]) => evaluate(scenario, attempt, { reader, client, judge }));
     // Re-running some scenarios into an existing label replaces just those.

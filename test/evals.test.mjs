@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { judgeDisagreement, limitsFor, overall, passes } from "../evals/judge.mjs";
 import { measureLayout } from "../evals/layout.mjs";
 import { compareRuns } from "../evals/stats.mjs";
+import { PairJudge, pairOutcome, pairPrompt, summarizePairs } from "../evals/versus.mjs";
 
 const run = (category, metrics = {}, tools = []) => ({
     scenario: { category, expect: ["board"], points: ["a", "b", "c"] },
@@ -70,4 +71,52 @@ test("panel title bars obscured by the answer are measured and capped, but inset
     assert.ok(measureLayout([borderOnly], { width: 100, height: 100 }).panelHeaderCovered < 25);
     const stricterCap = limitsFor(run("3d", { ...metrics, targetCovered: 60 }), {}).filter(({ key }) => key === "visual");
     assert.equal(Math.min(...stricterCap.map(({ max }) => max)), 2);
+});
+
+test("blind pair judging cancels an A-position preference and retains genuine wins", () => {
+    const biased = pairOutcome([{ model: "one", order: "AB", winner: "A" }, { model: "one", order: "BA", winner: "A" }]);
+    assert.equal(biased.preference, 0);
+    assert.equal(biased.orderDisagreements, 1);
+    const winner = pairOutcome([{ model: "one", order: "AB", winner: "B" }, { model: "one", order: "BA", winner: "A" }]);
+    assert.deepEqual([winner.preference, winner.winner, winner.orderDisagreements], [1, "right", 0]);
+});
+
+test("pair prompts swap positions but never disclose which label owns either answer", () => {
+    const scenario = { category: "3d", ask: "How?", points: ["the answer"], expect: ["scene"] };
+    const run = (text) => ({ record: { text, captions: [], tools: [], error: null }, metrics: { boardOverlaps: 0, boardOff: 0, targetCovered: 0, panelHeaderCovered: 0, failedTools: 0, mediaMatch: true }, frames: [{ tag: "final" }] });
+    const input = { scenario, meta: { title: "Test" }, left: run("baseline"), right: run("candidate"), screen: "screen.jpg" };
+    assert.match(pairPrompt(input, "AB"), /# A\nSpoken answer: "baseline"/);
+    assert.match(pairPrompt(input, "BA"), /# A\nSpoken answer: "candidate"/);
+    const summary = summarizePairs([{ id: "x", scenario: "x", category: "3d", preference: 1, winner: "right", orderDisagreements: 0 }], ["base", "candidate"]);
+    assert.equal(summary.interval, null);
+});
+
+test("pairwise judges see both positions and normalize their votes to the candidate", async () => {
+    const file = new URL("./evals.test.mjs", import.meta.url);
+    const run = (text) => ({
+        record: { text, captions: [], tools: [], error: null },
+        metrics: { boardOverlaps: 0, boardOff: 0, targetCovered: 0, panelHeaderCovered: 0, failedTools: 0, mediaMatch: true },
+        frames: [{ tag: "final", path: file }],
+    });
+    const deleted = [];
+    let calls = 0;
+    const client = {
+        async createSession() {
+            const sessionId = String(++calls);
+            return {
+                sessionId,
+                async sendAndWait({ prompt, attachments }) {
+                    assert.equal(attachments.length, 3);
+                    return { data: { content: JSON.stringify({ winner: /# A\nSpoken answer: "candidate"/.test(prompt) ? "A" : "B" }) } };
+                },
+                async disconnect() {},
+            };
+        },
+        async deleteSession(id) {
+            deleted.push(id);
+        },
+    };
+    const judge = new PairJudge({ client, models: ["m1", "m2"], effort: "medium", workspace: "." });
+    const verdict = await judge.compare({ scenario: { category: "3d", ask: "How?", points: ["the answer"], expect: ["scene"] }, meta: { title: "Test" }, screen: file, left: run("baseline"), right: run("candidate") });
+    assert.deepEqual([verdict.preference, verdict.orderDisagreements, calls, deleted.length], [1, 0, 4, 4]);
 });
