@@ -642,6 +642,21 @@ export const SCENARIOS = [
         ],
     },
     {
+        id: "pt-vscode-panel",
+        category: "pointing-hard",
+        url: "https://vscode.dev/",
+        wait: 9000,
+        locate: () => document.querySelector("a[aria-label^='Toggle Panel']"),
+        decoys: () => [...document.querySelectorAll(".titlebar-container a.action-label")].filter((a) => !a.getAttribute("aria-label").startsWith("Toggle Panel")),
+        mark: false,
+        ask: "how do I open the panel at the bottom of the editor?",
+        expect: ["annotate"],
+        points: [
+            "click the Toggle Panel icon in the row of four small layout icons at the top right: the third from the left, with a bar along the bottom of the square, not the sidebar toggles beside it",
+            "Cmd+J does the same from the keyboard",
+        ],
+    },
+    {
         id: "pt-wiki-pdf",
         category: "pointing-hard",
         url: `${WIKI}Bayes%27_theorem&oldid=1381079899`,
