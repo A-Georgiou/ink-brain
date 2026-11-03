@@ -160,7 +160,7 @@ api.on("live:state", (next) => {
     if (next.pen && !wasPen) enterPen();
     if (!next.pen && wasPen) exitPen();
     updateDock();
-    setup.render(next.permissions, next.copilot);
+    setup.render(next.permissions, next.answer);
 });
 
 function enterPen() {
@@ -620,31 +620,68 @@ api.on("live:flash", () => {
 
 const setup = (() => {
     const el = $("#setup");
+    const note = el.querySelector(".answer-status");
+    const form = el.querySelector(".answer-key");
+    const input = form.querySelector("input");
+    const KEYED = { openai: "OpenAI", anthropic: "Anthropic" };
+    let provider = null;
+    let shown = "";
     el.addEventListener("click", (event) => {
         const button = event.target.closest("button");
         if (!button) return;
-        const item = button.closest("li");
-        if (item?.dataset.kind === "copilot") {
+        const kind = button.closest("li")?.dataset.kind;
+        const action = button.dataset.answer;
+        if (button.dataset.provider) {
+            note.textContent = "Connecting...";
+            api.command("setProvider", button.dataset.provider);
+        } else if (action === "sign-in") {
+            note.textContent = "Finish in the Terminal window that opened. This updates by itself.";
             api.command("signIn");
-            item.querySelector("span").textContent = "Finish in the Terminal window that opened. This updates by itself.";
-        } else if (item) api.command("requestPermission", item.dataset.kind);
+        } else if (action === "check") {
+            note.textContent = "Checking...";
+            api.command("setProvider", provider);
+        } else if (action === "page") api.command("openProviderPage", provider);
+        else if (kind) api.command("requestPermission", kind);
         else if (button.dataset.action === "restart") api.command("restartHelper");
         else if (button.dataset.action === "done") el.classList.add("hidden");
     });
+    // The overlay only takes keys while focused, so clicking the field focuses it.
+    input.addEventListener("pointerdown", () => api.command("focus"));
+    form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        if (!input.value.trim()) return;
+        note.textContent = "Checking your key...";
+        api.command("saveKey", { provider, key: input.value });
+        input.value = "";
+    });
+    const show = (name, on) => (el.querySelector(`[data-answer="${name}"]`).hidden = !on);
+    // How the built-in session answers; redrawn only when that changes, so progress notes stay up meanwhile.
+    function renderAnswer(answer) {
+        const next = JSON.stringify(answer);
+        if (!answer || next === shown) return;
+        shown = next;
+        provider = answer.provider;
+        for (const chip of el.querySelectorAll("[data-provider]")) {
+            chip.classList.toggle("primary", chip.dataset.provider === provider);
+            chip.setAttribute("aria-checked", String(chip.dataset.provider === provider));
+        }
+        const keyed = KEYED[provider];
+        const ready = `${answer.login ? `Signed in as ${answer.login}.` : "Connected."} Answering with ${answer.model}.`;
+        note.textContent = answer.ready ? ready : (answer.detail ?? "Sign in to answer with your GitHub Copilot plan.");
+        form.hidden = answer.ready || !keyed;
+        input.placeholder = keyed ? `Paste your ${keyed} API key` : "";
+        show("sign-in", provider === "copilot" && !answer.ready);
+        show("check", provider === "ollama" && !answer.ready);
+        show("page", provider !== "copilot" && !answer.ready);
+        el.querySelector('[data-answer="page"]').textContent = provider === "ollama" ? "Get Ollama" : "Get a key";
+    }
     return {
         show: () => el.classList.remove("hidden"),
-        render(permissions, copilot) {
+        render(permissions, answer) {
+            renderAnswer(answer);
+            if (!permissions) return;
             for (const item of el.querySelectorAll("li")) {
                 const button = item.querySelector("button");
-                if (item.dataset.kind === "copilot") {
-                    item.hidden = !copilot;
-                    item.classList.toggle("granted", Boolean(copilot?.signedIn));
-                    button.disabled = Boolean(copilot?.signedIn);
-                    button.textContent = copilot?.signedIn ? "Signed in" : "Sign in";
-                    if (copilot?.signedIn) item.querySelector("span").textContent = copilot.login ? `Signed in as ${copilot.login}.` : "Signed in.";
-                    continue;
-                }
-                if (!permissions) continue;
                 const status = permissions[item.dataset.kind];
                 const granted = status === "granted";
                 item.classList.toggle("granted", granted);

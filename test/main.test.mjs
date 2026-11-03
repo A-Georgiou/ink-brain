@@ -6,9 +6,11 @@ import { test } from "node:test";
 import { runInNewContext } from "node:vm";
 import { Memory } from "../src/main/memory.mjs";
 import { buildTurnPrompt } from "../src/main/prompt.mjs";
+import { listModels, pickModel } from "../src/main/providers.mjs";
 import { resolveAppPath } from "../src/main/routes.mjs";
 import { extractPdf, parseCaptions } from "../src/main/reader-formats.mjs";
 import { describePage, Reader, siteAllowed, siteOf } from "../src/main/reader.mjs";
+import { createSecrets } from "../src/main/secrets.mjs";
 import { Surface } from "../src/main/surface.mjs";
 
 const geometry = { modelWidth: 1512, modelHeight: 982, scale: 1 };
@@ -438,4 +440,45 @@ test("later turns are told what Ink Brain still has on screen, until it clears i
     await surface.execute("live_clear", {});
     assert.deepEqual(surface.onScreen(), []);
     assert.doesNotMatch(buildTurnPrompt({ text: "next", geometry, onScreen: surface.onScreen() }), /Still on their screen/);
+});
+
+test("providers list only models that can see the screen and default to the best family in the evals", async () => {
+    const replies = {
+        "https://api.openai.com/v1/models": { data: [{ id: "gpt-6.1-terra", created: 2 }, { id: "gpt-6.2-sol", created: 3 }, { id: "gpt-6-realtime", created: 4 }, { id: "text-embedding-4", created: 5 }] },
+        "https://api.anthropic.com/v1/models?limit=100": { data: [{ id: "claude-sonnet-5-6" }, { id: "claude-opus-5-5" }] },
+        "http://127.0.0.1:11434/api/tags": { models: [{ name: "qwen3-vl" }, { name: "llama3" }] },
+    };
+    const fetch = async (url, init) => {
+        const vision = url.endsWith("/api/show") && JSON.parse(init.body).model === "qwen3-vl";
+        const body = url.endsWith("/api/show") ? { capabilities: vision ? ["completion", "vision", "tools"] : ["completion", "tools"] } : replies[url];
+        return { ok: true, status: 200, json: async () => body };
+    };
+
+    const openai = await listModels("openai", "key", fetch);
+    assert.deepEqual(openai, ["gpt-6.2-sol", "gpt-6.1-terra"]);
+    assert.equal(pickModel("openai", openai, "claude-opus-5.5"), "gpt-6.1-terra");
+    const anthropic = await listModels("anthropic", "key", fetch);
+    assert.equal(pickModel("anthropic", anthropic, "gpt-6.1-terra"), "claude-opus-5-5");
+    assert.equal(pickModel("anthropic", anthropic, "claude-sonnet-5-6"), "claude-sonnet-5-6");
+    assert.deepEqual(await listModels("ollama", undefined, fetch), ["qwen3-vl"]);
+    await assert.rejects(listModels("anthropic", "bad", async () => ({ ok: false, status: 401 })), /did not accept that API key/);
+    await assert.rejects(
+        listModels("ollama", undefined, async () => {
+            throw new Error("ECONNREFUSED");
+        }),
+        /Ollama is not running/,
+    );
+});
+
+test("API keys are kept encrypted in an owner-only file", () => {
+    const dir = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "ink-brain-keys-")), "keys");
+    const crypto = { encryptString: (text) => Buffer.from([...text].reverse().join("")), decryptString: (data) => [...data.toString()].reverse().join("") };
+    const secrets = createSecrets(dir, crypto);
+    assert.equal(secrets.get("anthropic"), null);
+
+    secrets.set("anthropic", "sk-ant-secret");
+    const file = path.join(dir, "anthropic.key");
+    assert.doesNotMatch(fs.readFileSync(file, "utf8"), /sk-ant-secret/);
+    assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+    assert.equal(secrets.get("anthropic"), "sk-ant-secret");
 });

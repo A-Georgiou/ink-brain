@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeImage, powerMonitor, protocol, screen, session, shell, Tray, utilityProcess } from "electron";
+import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeImage, powerMonitor, protocol, safeStorage, screen, session, shell, Tray, utilityProcess } from "electron";
 import { installExtension } from "../../scripts/install-extension.mjs";
 import { pageTitle, windowTitle } from "../shared/anchors.mjs";
 import { inkGrid, needsSettling, settleMarks } from "../shared/calm.mjs";
@@ -21,7 +21,9 @@ import { readImageFile, saveCutout } from "./images.mjs";
 import { Memory } from "./memory.mjs";
 import { APP_SCHEME, registerAppProtocol } from "./protocol.mjs";
 import { buildTurnPrompt, systemMessage } from "./prompt.mjs";
+import { listModels, PROVIDERS, sdkProvider } from "./providers.mjs";
 import { describePage, Reader, siteAllowed, siteOf } from "./reader.mjs";
+import { createSecrets } from "./secrets.mjs";
 import { cleanId, Surface } from "./surface.mjs";
 import { createCheckWaiter, publicChoices } from "./tutor.mjs";
 import { Voice } from "./voice.mjs";
@@ -54,8 +56,8 @@ const state = {
     target: config.defaultTarget,
     model: config.model,
     permissions: null,
-    // { signedIn, login } once the built-in session has checked its Copilot account.
-    copilot: null,
+    // { provider, ready, detail, login, model } once the built-in session has checked how it answers.
+    answer: null,
 };
 
 let overlay = null;
@@ -301,6 +303,16 @@ function runCommand(name, value) {
             return requestPermission(String(value));
         case "signIn":
             return signIn();
+        case "focus":
+            return overlay?.focus();
+        case "setProvider":
+            return setProvider(String(value));
+        case "saveKey":
+            return saveKey(value);
+        case "openProviderPage": {
+            const page = PROVIDERS[String(value)]?.page;
+            return page && shell.openExternal(page);
+        }
         case "controlDecision":
             return decide(controlRequests, value);
         case "webDecision":
@@ -648,28 +660,72 @@ async function requestPermission(kind) {
     pushState();
 }
 
-// Shows the sign-in step while the built-in session has no Copilot account.
-async function checkSignIn() {
-    const account = await embedded.account().catch(() => null);
-    state.copilot = account && { signedIn: account.isAuthenticated, login: account.login ?? null };
-    if (account && !account.isAuthenticated) showSetup(true);
+// Whether the chosen provider can answer; the setup card opens with the reason when it cannot.
+async function checkAnswer() {
+    const provider = PROVIDERS[config.provider] ? config.provider : "copilot";
+    const answer = { provider, ready: false, detail: null, login: null };
+    try {
+        await embedded.ensure();
+        if (provider === "copilot") {
+            const account = await embedded.account();
+            Object.assign(answer, { ready: account.isAuthenticated, login: account.login ?? null });
+        } else answer.ready = true;
+    } catch (error) {
+        answer.detail = error.message;
+    }
+    state.model = embedded.model;
+    state.answer = { ...answer, model: embedded.model, at: Date.now() };
+    if (!answer.ready) showSetup(true);
     pushState();
 }
 
-// A fresh Copilot connection picks up a sign-in made since the last one.
+// The user's own provider for the built-in session, or null to answer with GitHub Copilot.
+async function ownProvider() {
+    const id = config.provider;
+    if (id === "copilot" || !PROVIDERS[id]) return null;
+    const { env, label } = PROVIDERS[id];
+    const key = env ? (secrets.get(id) ?? process.env[env]) : undefined;
+    if (env && !key) throw new Error(`Paste your ${label} API key to start. It stays encrypted on this Mac.`);
+    const models = await listModels(id, key);
+    if (!models.length) throw new Error(id === "ollama" ? "Pull a model that can see images and use tools, then check again." : `Your ${label} account has no models that can see images.`);
+    return { id, sdk: sdkProvider(id, key), models };
+}
+
+// Switches the built-in session to another provider, or checks the current one again.
+async function setProvider(id) {
+    if (!PROVIDERS[id]) return;
+    config.provider = id;
+    saveConfig({ provider: id });
+    await reconnect();
+}
+
+// Checks an API key with its provider, keeps it encrypted, then answers with that provider.
+async function saveKey({ provider, key } = {}) {
+    const value = String(key ?? "").trim();
+    if (!PROVIDERS[provider]?.env || !value) return;
+    try {
+        await listModels(provider, value);
+    } catch (error) {
+        state.answer = { provider, ready: false, detail: error.message, login: null, model: null, at: Date.now() };
+        return pushState();
+    }
+    secrets.set(provider, value);
+    await setProvider(provider);
+}
+
+// A fresh connection picks up a new sign-in, key or provider.
 let reconnecting = null;
 function reconnect() {
     reconnecting ??= (async () => {
         await embedded.stop();
-        await embedded.ensure().catch(() => {});
-        state.model = embedded.model;
-        await checkSignIn();
+        await checkAnswer();
     })().finally(() => {
         reconnecting = null;
     });
     return reconnecting;
 }
 
+const secrets = createSecrets(path.join(CONFIG_DIR, "keys"), safeStorage);
 const SIGNED_IN = path.join(CONFIG_DIR, "signed-in");
 let signInTimer = 0;
 
@@ -1230,9 +1286,9 @@ async function runTurn({ text, marks }) {
     send("live:turn", { type: "start", id: turn.id, question: text, target: brain.label, anchor: boundsOfMarks(marks) });
     send("live:flash", {});
     try {
-        if (brain === embedded && state.copilot?.signedIn === false) {
+        if (brain === embedded && state.answer?.ready === false) {
             await reconnect();
-            if (state.copilot?.signedIn === false) throw new Error("Sign in to GitHub Copilot first: click Sign in on the setup card.");
+            if (state.answer?.ready === false) throw new Error(state.answer.detail ?? "Sign in to GitHub Copilot, or choose another way to answer, on the setup card.");
         }
         const [shot, app] = await Promise.all([captureScreen({ marks }), front?.app ? front : frontmost()]);
         if (turn.done) return turn.ended;
@@ -1333,8 +1389,8 @@ function updateTrayMenu() {
             { label: "Clear screen", click: () => clearScreen("all") },
             { label: "New conversation", click: () => newConversation() },
             { type: "separator" },
-            { label: `Model: ${state.model}`, enabled: false },
-            { label: "Permissions...", click: () => showSetup(true) },
+            { label: `${PROVIDERS[config.provider]?.label ?? PROVIDERS.copilot.label}: ${state.model}`, enabled: false },
+            { label: "Set up...", click: () => showSetup(true) },
             { label: "Install Copilot CLI and App extension", click: () => installCliExtension() },
             { label: "Open settings file", click: () => openSettings() },
             { type: "separator" },
@@ -1490,23 +1546,18 @@ async function start() {
         config,
         tools: sdkTools(),
         extraTools: config.imageGeneration ? ["image_generation"] : [],
-        systemMessage: systemMessage({ imageGeneration: config.imageGeneration, web: config.web !== "off" }),
+        systemMessage: ({ imageGeneration }) => systemMessage({ imageGeneration: config.imageGeneration && imageGeneration, web: config.web !== "off" }),
         workspace: WORKSPACE_DIR,
         resumeFrom: () => (memoryOn() ? memory.conversation(config.memory.resumeHours) : null),
+        ownProvider,
     });
     memory.prune();
     setInterval(noteScreen, 30_000);
     for (const event of ["lock-screen", "suspend"]) powerMonitor.on(event, () => memory.observe(null));
     wireBrain(embedded);
-    embedded
-        .ensure()
-        .then(() => {
-            state.model = embedded.model;
-            pushState();
-            checkSignIn();
-            if (memoryOn("copilotSessions")) embedded.recentSessions().catch(() => {});
-        })
-        .catch((error) => toast(`Ink Brain is not ready: ${error.message}. Check that you are signed in to Copilot CLI.`, "error"));
+    checkAnswer().then(() => {
+        if (memoryOn("copilotSessions")) embedded.recentSessions().catch(() => {});
+    });
     createTray();
     wireHelper();
     wireVoice();

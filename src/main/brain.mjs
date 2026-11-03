@@ -2,6 +2,7 @@
 import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import path from "node:path";
+import { pickModel } from "./providers.mjs";
 
 // Vision models to try, in order, when the account has neither the configured model nor Auto.
 const FALLBACK_MODELS = ["gpt-6.1-terra", "claude-opus-5.5", "claude-sonnet-5.5", "gpt-6.1-sol", "claude-haiku-5.5"];
@@ -50,9 +51,10 @@ export class EmbeddedBrain extends EventEmitter {
     #calls;
 
     // extraTools are built-in tools such as image_generation; resumeFrom() names a conversation to resume.
-    constructor({ config, tools, extraTools = [], systemMessage, workspace, resumeFrom = () => null }) {
+    // ownProvider() returns the user's own provider as { id, sdk, models }, or null to answer with Copilot.
+    constructor({ config, tools, extraTools = [], systemMessage, workspace, resumeFrom = () => null, ownProvider = async () => null }) {
         super();
-        Object.assign(this, { config, tools, extraTools, systemMessage, workspace, resumeFrom });
+        Object.assign(this, { config, tools, extraTools, systemMessage, workspace, resumeFrom, ownProvider });
         this.#calls = new ToolCalls(tools);
     }
 
@@ -72,21 +74,25 @@ export class EmbeddedBrain extends EventEmitter {
             await client.start();
             this.#client = client;
         }
-        this.model = await this.#pickModel();
+        const own = await this.ownProvider();
+        this.model = own ? pickModel(own.id, own.models, this.config.model) : await this.#pickModel();
         // MCP tools are never exposed here, so not starting the user's servers saves ~15 s on the first turn.
         const mcp = await this.#mcpServers();
+        // Image generation is a Copilot service, so the user's own providers go without it.
+        const extraTools = own ? [] : this.extraTools;
         const options = {
             clientName: "ink-brain",
             model: this.model,
-            reasoningEffort: effortFor(this.model, this.config.reasoningEffort),
+            reasoningEffort: own?.id === "ollama" ? undefined : effortFor(this.model, this.config.reasoningEffort),
+            ...(own && { provider: own.sdk }),
             streaming: true,
             workingDirectory: this.workspace,
             tools: this.#calls.tools,
-            availableTools: [...this.tools.map((tool) => tool.name), ...this.extraTools],
+            availableTools: [...this.tools.map((tool) => tool.name), ...extraTools],
             disabledMcpServers: [...mcp, "github-mcp-server"],
-            imageGeneration: { enabled: this.extraTools.includes("image_generation") },
+            imageGeneration: { enabled: extraTools.includes("image_generation") },
             skipCustomInstructions: !this.config.useCustomInstructions,
-            systemMessage: this.systemMessage,
+            systemMessage: typeof this.systemMessage === "function" ? this.systemMessage({ imageGeneration: !own }) : this.systemMessage,
             onPermissionRequest: async () => ({ kind: "reject" }),
         };
         const previous = this.resumeFrom();

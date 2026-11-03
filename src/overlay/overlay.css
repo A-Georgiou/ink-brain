@@ -1150,8 +1150,36 @@ body.checking #bubble {
     border-radius: 12px;
 }
 
-.perm-list li[hidden] {
+#answer-with {
+    margin: 14px 0 0;
+    display: grid;
+    gap: 8px;
+}
+
+#answer-with .providers {
+    flex-wrap: wrap;
+}
+
+#answer-with [hidden] {
     display: none;
+}
+
+.answer-status {
+    margin: 0;
+}
+
+.answer-key input {
+    flex: 1;
+    min-width: 0;
+    padding: 5px 12px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: rgba(110, 118, 129, 0.14);
+    color: var(--text);
+    font: inherit;
+    font-size: 12.5px;
+    outline: none;
+    user-select: text;
 }
 
 .perm-list li div {

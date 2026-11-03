@@ -48,9 +48,23 @@
 
     <section id="setup" class="card interactive hidden">
         <h2>Set up Ink Brain</h2>
-        <p class="muted">Ink Brain needs your GitHub Copilot sign-in and a few macOS permissions. Nothing leaves your Mac until you ask Ink Brain something.</p>
+        <p class="muted">Choose what answers you, then allow a few macOS permissions. Nothing leaves your Mac until you ask Ink Brain something.</p>
+        <div id="answer-with">
+            <div class="row providers" role="radiogroup" aria-label="Answer with">
+                <button type="button" class="chip" role="radio" data-provider="copilot">GitHub Copilot</button>
+                <button type="button" class="chip" role="radio" data-provider="openai">OpenAI</button>
+                <button type="button" class="chip" role="radio" data-provider="anthropic">Claude</button>
+                <button type="button" class="chip" role="radio" data-provider="ollama">Ollama</button>
+            </div>
+            <p class="answer-status small muted"></p>
+            <form class="row answer-key" hidden><input type="password" autocomplete="off" spellcheck="false" aria-label="API key"><button type="submit" class="chip primary">Save</button></form>
+            <div class="row">
+                <button type="button" class="chip" data-answer="sign-in" hidden>Sign in</button>
+                <button type="button" class="chip" data-answer="check" hidden>Check again</button>
+                <button type="button" class="chip" data-answer="page" hidden>Get a key</button>
+            </div>
+        </div>
         <ul class="perm-list">
-            <li data-kind="copilot" hidden><div><strong>GitHub Copilot</strong><span>Sign in so Ink Brain can answer with your Copilot plan.</span></div><button type="button" class="chip">Sign in</button></li>
             <li data-kind="screen"><div><strong>Screen Recording</strong><span>So Ink Brain can see what you point at.</span></div><button type="button" class="chip">Grant</button></li>
             <li data-kind="microphone"><div><strong>Microphone</strong><span>So you can talk to Ink Brain.</span></div><button type="button" class="chip">Grant</button></li>
             <li data-kind="speech"><div><strong>Speech Recognition</strong><span>Transcribes your voice on-device.</span></div><button type="button" class="chip">Grant</button></li>
