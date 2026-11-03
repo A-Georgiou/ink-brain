@@ -69,13 +69,21 @@ Each question sends one screenshot, plus a zoomed crop around your marks, to a C
 ### Install
 
 ```bash
+curl -fsSL https://inkbrain.app/install.sh | bash
+```
+
+The installer checks your Mac, offers to install Node.js and Copilot CLI if they are missing, then installs Ink Brain into `~/.ink-brain/app`, adds it to your Applications folder and starts it. Run it again to update; `curl -fsSL https://inkbrain.app/install.sh | bash -s -- --uninstall` removes it. You can [read the script](https://inkbrain.app/install.sh) first.
+
+To build from source instead:
+
+```bash
 git clone https://github.com/A-Georgiou/ink-brain.git
 cd ink-brain
 npm install
 npm start
 ```
 
-On first launch, a setup card asks you to allow **Ink Brain Helper** to use Screen Recording, the Microphone and Speech Recognition, and optionally Accessibility so it can operate your Mac when you approve. After switching on Screen Recording in System Settings, click **Restart helper**.
+On first launch, a setup card asks you to allow **Ink Brain Helper** to use Screen Recording, the Microphone and Speech Recognition, and optionally Accessibility, so marks snap onto the controls you mean and it can operate your Mac when you approve. After switching on Screen Recording in System Settings, click **Restart helper**.
 
 The neural voice model (about 90 MB) downloads on first launch, and Apple voices fill in until it is ready. Run `npm run doctor` at any time to check the helper, permissions, screen capture and voices.
 
@@ -94,7 +102,7 @@ macOS ties the helper's permissions to its exact build, so after an update that 
 | Ask about audio | Turn on **Hear my screen** to ask about a video or call playing on your Mac (transcribed on-device). |
 | Manage memory | **Memory** in the menu bar shows what Ink Brain remembers, turns parts off or forgets everything. |
 
-Drawings and panels stay with the page they were made for. They hide when you switch tab, window or Space and come back when you return. Drag panels by their title bar and resize them from the corner.
+Drawings and panels stay with the page they were made for. They hide when you switch tab, window or Space and come back when you return. Drag panels by their title bar and resize them from the corner, and move the answer by dragging its header.
 
 ### Copilot CLI and the Copilot app
 
@@ -118,8 +126,8 @@ Settings live in `~/.ink-brain/config.json`, which **Open settings file** in the
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `hotkey` | `Alt+Shift+Space` | Shortcut for pen mode, in Electron accelerator syntax (`Alt` is Option). |
-| `model` | `claude-opus-5.5` | Model for the built-in session; another vision model is used if it is unavailable. |
-| `reasoningEffort` | `low` | Higher effort plans more detailed visuals but takes longer to start talking. |
+| `model` | `gpt-6.1-terra` | Model for the built-in session; another vision model is used if it is unavailable. |
+| `reasoningEffort` | `null` | `null` runs each model at the effort that balances speed and quality best (medium for GPT-6.1 Terra, otherwise low). Higher effort plans more detailed visuals but takes longer to start talking. |
 | `useCustomInstructions` | `false` | Load your Copilot custom instructions into the built-in session. |
 | `defaultTarget` | `auto` | `auto`, or `standalone` to always use the built-in session. |
 | `stayLive` | `false` | Start in hands-free mode. |
@@ -174,7 +182,7 @@ Set `INK_BRAIN_HOME` to run a test instance with its own settings next to your r
 
 ### Evals
 
-The eval suite plays 26 real-world scenarios (circled equations, photos to model in 3D, pages to research, controls to find, code and diagrams) through Ink Brain's own brain, tools and overlay, and a vision model scores what you would see and hear. The latest round of prompt and tool tuning raised the average score from 3.67 to 3.91 out of 5.
+The eval suite plays 70 real-world scenarios (circled equations, photos to model in 3D, pages to research, controls to find, diagrams, tutoring, conversations and tricky inputs) through Ink Brain's own brain, tools and overlay, and a panel of vision models scores what you would see and hear.
 
 ```bash
 npm run eval:capture              # capture the scenario pages once (fixtures stay local)
@@ -200,10 +208,10 @@ Narrow a run with `--only`, `--category` or `--repeat`.
 ## Limitations
 
 - macOS only. The overlay covers the display under your cursor when you press the hotkey.
-- Marks are placed from coordinates read off the screenshot, so they can land slightly off on dense screens.
+- Marks are placed from coordinates read off the screenshot. With Accessibility allowed they snap onto the control underneath; otherwise they can land slightly off on dense screens.
 - Drawings follow pages by window and title, so they do not follow scrolling within a page.
 - The mic pauses while Ink Brain speaks, so you interrupt with the hotkey rather than by talking over it.
-- Explanations appear once the model has written all their steps, usually 10 to 30 seconds after you ask, while Ink Brain starts talking within a few seconds.
+- Ink Brain starts talking within a few seconds, but the first visual of an explanation takes about 10 seconds to appear, or about 20 for a 3D model.
 - 3D models are most faithful when the picture shows the thing straight from the side, front or above, so its shape can be traced.
 - The web reader is signed out, so it cannot read private pages.
 
