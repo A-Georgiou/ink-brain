@@ -128,12 +128,12 @@ function namesOf(board, steps) {
     return { types: new Map(board.elements.map((element) => [element.id, element.type])), parts, made, vars: Object.keys(board.vars ?? {}) };
 }
 
-function actionProblem(action, names) {
+function actionProblem(action, names, laxHide = false) {
     if (!BOARD_ACTIONS.includes(action?.do)) return `unknown action "${action?.do}"; use ${BOARD_ACTIONS.join(", ")}`;
     const targets = targetsOf(action);
     for (const target of targets) {
         const [id, part] = String(target).split(".");
-        if (action.do === "hide" && names.made.has(target)) continue;
+        if (action.do === "hide" && (names.made.has(target) || (laxHide && part === undefined && ID.test(id)))) continue;
         if (!names.types.has(id)) return `${action.do} targets unknown element "${target}"`;
         if (part !== undefined && !names.parts.get(id)?.has(part)) return `${action.do} targets "${target}", but "${id}" has no \\part{${part}}{...}`;
     }
@@ -185,7 +185,7 @@ export function playableBoardSteps(board, steps) {
     const dropped = [];
     const kept = lists.map((actions, index) =>
         actions.filter((action) => {
-            const bad = actionProblem(action, names);
+            const bad = actionProblem(action, names, true);
             if (bad) dropped.push(`board step ${index + 1}: ${bad}`);
             return !bad;
         }),
@@ -218,29 +218,38 @@ const nested = (a, b) => {
 };
 // Elements that touch or overlap, unless nested, need separating.
 const hits = (a, b) => a.x < b.x + b.w + 4 && b.x < a.x + a.w + 4 && a.y < b.y + b.h + 4 && b.y < a.y + a.h + 4 && !nested(a, b);
-const fitsIn = (v, size, max) => size > max - 2 * BOARD_MARGIN || (v >= BOARD_MARGIN - 0.5 && v + size <= max - BOARD_MARGIN + 0.5);
+const fitsIn = (v, size, max, margin = BOARD_MARGIN) => size > max - 2 * margin || (v >= margin - 0.5 && v + size <= max - margin + 0.5);
 
 // The smallest move [dx, dy] that keeps box b on a width by height board and off the taken boxes; a move clears them by GAP.
 export function clearSpot(b, taken, width, height) {
-    const into = (v, size, max) => (size > max - 2 * BOARD_MARGIN ? BOARD_MARGIN - v : Math.min(Math.max(v, BOARD_MARGIN), max - BOARD_MARGIN - size) - v);
-    const at = ([dx, dy]) => ({ x: b.x + dx, y: b.y + dy, w: b.w, h: b.h, frame: b.frame });
-    const onBoard = (r) => fitsIn(r.x, r.w, width) && fitsIn(r.y, r.h, height);
-    let frontier = [[into(b.x, b.w, width), into(b.y, b.h, height)]];
-    const seen = new Set();
-    for (let depth = 0; depth < 6 && frontier.length; depth++) {
-        const next = [];
-        for (const d of frontier) {
-            const r = at(d);
-            const blockers = taken.filter((o) => hits(r, o));
-            if (!blockers.length) return d;
-            for (const o of blockers) next.push([d[0], o.y - GAP - b.h - b.y], [d[0], o.y + o.h + GAP - b.y], [o.x - GAP - b.w - b.x, d[1]], [o.x + o.w + GAP - b.x, d[1]]);
+    const search = (gap, margin) => {
+        const into = (v, size, max) => (size > max - 2 * margin ? margin - v : Math.min(Math.max(v, margin), max - margin - size) - v);
+        const at = ([dx, dy]) => ({ x: b.x + dx, y: b.y + dy, w: b.w, h: b.h, frame: b.frame });
+        const onBoard = (r) => fitsIn(r.x, r.w, width, margin) && fitsIn(r.y, r.h, height, margin);
+        let frontier = [[into(b.x, b.w, width), into(b.y, b.h, height)]];
+        const seen = new Set();
+        let least = null;
+        for (let depth = 0; depth < 6 && frontier.length; depth++) {
+            const next = [];
+            for (const d of frontier) {
+                const r = at(d);
+                const blockers = taken.filter((o) => hits(r, o));
+                if (!blockers.length) return { d, clear: true };
+                const cost = blockers.reduce((sum, o) => sum + overlap(r, o), 0) + Math.hypot(...d) * 0.1;
+                if (!least || cost < least.cost) least = { d, cost };
+                for (const o of blockers) next.push([d[0], o.y - gap - b.h - b.y], [d[0], o.y + o.h + gap - b.y], [o.x - gap - b.w - b.x, d[1]], [o.x + o.w + gap - b.x, d[1]]);
+            }
+            frontier = next
+                .filter((d) => onBoard(at(d)) && !seen.has(d.join()) && seen.add(d.join()))
+                .sort((p, q) => Math.hypot(...p) - Math.hypot(...q))
+                .slice(0, 16);
         }
-        frontier = next
-            .filter((d) => onBoard(at(d)) && !seen.has(d.join()) && seen.add(d.join()))
-            .sort((p, q) => Math.hypot(...p) - Math.hypot(...q))
-            .slice(0, 16);
-    }
-    return [into(b.x, b.w, width), into(b.y, b.h, height)];
+        return { d: least?.d ?? [into(b.x, b.w, width), into(b.y, b.h, height)], clear: false };
+    };
+    const first = search(GAP, BOARD_MARGIN);
+    if (first.clear) return first.d;
+    const tight = search(4, 2);
+    return tight.clear ? tight.d : first.d;
 }
 
 // Leave space for an arrow between connected nodes when the board has room.
