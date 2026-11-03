@@ -1099,7 +1099,7 @@ export async function renderScene(spec, { root, makeLabel, inPlace = false, reso
         if (!focus && !dragging) for (const l of [...shown].sort((a, b) => (b.bulk ?? 0) - (a.bulk ?? 0)).slice(0, MAX_OPEN)) open.add(l);
         const [cx, cy] = model ? [(model.x0 + model.x1) / 2, (model.y0 + model.y1) / 2] : [w / 2, h / 2];
         const bottom = h - inset - 6;
-        const placed = [];
+        const wanted = [];
         const drawn = [];
         for (const l of shown) {
             const m = materialsOf(l.item.obj)[0];
@@ -1119,12 +1119,22 @@ export async function renderScene(spec, { root, makeLabel, inPlace = false, reso
             [dx, dy] = [dx / len, dy / len];
             const out = Math.min(170, Math.max(26, (model ? edgeDistance(a, dx, dy, model) : 0) + 18));
             const clampX = (x) => Math.min(Math.max(x, 6), w - l.width - 6);
-            const clampY = (y) => Math.min(Math.max(y, 6), bottom - PILL_PX);
             const left = clampX(dx >= 0 ? a.x + dx * out : a.x + dx * out - l.width);
-            let top = clampY(a.y + dy * out - PILL_PX / 2);
-            const clash = () => placed.find((q) => left < q.left + q.width + 6 && left + l.width + 6 > q.left && top < q.top + PILL_PX + 4 && top + PILL_PX + 4 > q.top);
-            for (let n = 0, q = clash(); q && n < 10; q = clash(), n++) top = clampY(a.y >= q.ay ? q.top + PILL_PX + 4 : q.top - PILL_PX - 4);
-            placed.push({ left, top, width: l.width, ay: a.y });
+            const top = Math.min(Math.max(a.y + dy * out - PILL_PX / 2, 6), bottom - PILL_PX);
+            wanted.push({ l, left, top, at: a.y, side: dx >= 0 ? 1 : -1 });
+        }
+        // Callouts down each side keep their parts' own top-to-bottom order, so their leader lines never cross.
+        for (const side of [1, -1]) {
+            const column = wanted.filter((q) => q.side === side).sort((p, q) => p.at - q.at);
+            for (const pass of [1, -1]) {
+                let edge = pass > 0 ? 6 : bottom - PILL_PX;
+                for (const q of pass > 0 ? column : [...column].reverse()) {
+                    q.top = pass > 0 ? Math.max(q.top, edge) : Math.min(q.top, edge);
+                    edge = q.top + pass * (PILL_PX + 4);
+                }
+            }
+        }
+        for (const { l, left, top } of wanted) {
             l.pill ??= { left, top };
             const k = Math.min(1, dt * 10);
             l.pill.left += (left - l.pill.left) * k;
