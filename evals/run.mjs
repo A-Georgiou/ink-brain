@@ -15,6 +15,7 @@ import { cleanId, Surface } from "../src/main/surface.mjs";
 import { boundsOfMarks, cropAround, isRegion, panelRect } from "../src/shared/geometry.mjs";
 import { STANDALONE_TOOLS, toToolResult } from "../src/shared/live-tools.mjs";
 import { Judge } from "./judge.mjs";
+import { measureLayout } from "./layout.mjs";
 import { printReport, summarize } from "./report.mjs";
 import { SCENARIOS } from "./scenarios.mjs";
 import { openStage, SCREEN } from "./stage.mjs";
@@ -285,6 +286,7 @@ function measure(scenario, meta, record) {
         total: record.total,
         boardOverlaps: overlaps.size,
         boardOff: off.size,
+        ...measureLayout(record.frames, SCREEN),
         targetCovered: Math.round(100 * Math.min(1, Math.max(0, ...covered))),
         pointed: scenario.mark === false ? pointedAt(t, record.tools) : undefined,
         reads: record.tools.filter((tool) => tool.name === "live_read").map((tool) => tool.args.url),

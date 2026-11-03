@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { judgeDisagreement, limitsFor, overall, passes } from "../evals/judge.mjs";
+import { measureLayout } from "../evals/layout.mjs";
 import { compareRuns } from "../evals/stats.mjs";
 
 const run = (category, metrics = {}, tools = []) => ({
@@ -53,4 +54,20 @@ test("judge disagreement reports large gaps even when the core caps the final sc
     assert.equal(report.flagged, true);
     assert.equal(report.overallGap, 0);
     assert.equal(judgeDisagreement({ category: "3d", judges: [{ scores }, { failed: "offline" }] }).missing, 1);
+});
+
+test("panel title bars obscured by the answer are measured and capped, but inset captions are not", () => {
+    const panel = { x: 40, y: 30, w: 60, h: 60 };
+    const frames = [
+        { layout: { bubble: { x: 60, y: 25, w: 40, h: 25 }, captions: { x: 40, y: 65, w: 60, h: 25 }, panels: [panel] } },
+        { layout: { bubble: { x: 60, y: 80, w: 40, h: 20 }, captions: null, panels: [panel] } },
+    ];
+    const metrics = measureLayout(frames, { width: 100, height: 100 });
+    assert.deepEqual(metrics, { panelHeaderCovered: 33, panelOffscreen: 0 });
+    assert.equal(caps(limitsFor(run("3d", metrics), {})).visual, 3);
+    assert.deepEqual(measureLayout(frames.slice(1), { width: 100, height: 100 }), { panelHeaderCovered: 0, panelOffscreen: 0 });
+    const borderOnly = { layout: { bubble: { x: 40, y: 20, w: 60, h: 20 }, panels: [panel] } };
+    assert.ok(measureLayout([borderOnly], { width: 100, height: 100 }).panelHeaderCovered < 25);
+    const stricterCap = limitsFor(run("3d", { ...metrics, targetCovered: 60 }), {}).filter(({ key }) => key === "visual");
+    assert.equal(Math.min(...stricterCap.map(({ max }) => max)), 2);
 });

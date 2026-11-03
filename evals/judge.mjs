@@ -58,7 +58,7 @@ function promptFor({ scenario, meta, record, metrics, reference, frames }) {
     ];
     if (record.captions.length) lines.push("Narrated steps:", ...record.captions.map((c, i) => `${i + 1}. "${c}"`));
     lines.push("Tools, in order:", ...(record.tools.length ? record.tools.map((tool) => `- ${describeTool(tool)}`) : ["- none"]));
-    const checks = [`board text overlaps: ${metrics.boardOverlaps}, board text off the edge: ${metrics.boardOff}`, `share of the user's target hidden under Ink Brain's own bubble or panels at worst: ${metrics.targetCovered}%`];
+    const checks = [`board text overlaps: ${metrics.boardOverlaps}, board text off the edge: ${metrics.boardOff}`, `share of the user's target hidden under Ink Brain's own bubble or panels at worst: ${metrics.targetCovered}%`, `panel headers hidden by Ink Brain's bubble or another panel: ${metrics.panelHeaderCovered}%, panels offscreen: ${metrics.panelOffscreen}%`];
     if (metrics.pointed !== undefined) checks.push(`a mark landed on the right control: ${metrics.pointed ? "yes" : "no"}`);
     lines.push(`Automatic checks: ${checks.join("; ")}.`);
     if (record.error) lines.push(`The turn ended with an error: ${record.error}`);
@@ -102,6 +102,7 @@ export function limitsFor({ scenario, record, metrics }, evidence) {
     else if (minorDefects) limit("visual", 5 - Math.min(2, minorDefects), `${minorDefects} visual blemishes`);
     if (metrics.boardOverlaps || metrics.boardOff) limit("visual", 3, "board text overlaps or runs off the board");
     if (metrics.targetCovered >= 20) limit("visual", metrics.targetCovered >= 50 ? 2 : 3, `Ink Brain hid ${metrics.targetCovered}% of what the user circled`);
+    if (metrics.panelHeaderCovered >= 25) limit("visual", 3, `Ink Brain hid ${metrics.panelHeaderCovered}% of a panel's title bar`);
     if (!metrics.mediaMatch) limit("fit", 2, `it used ${metrics.media.join(" and ") || "nothing"} where ${scenario.expect.join(" or ")} suits`);
     if (metrics.pointed === false) limit("pointing", 2, "no mark landed on the control");
     if (scenario.category === "research" && !record.tools.some((tool) => tool.name === "live_read" && !tool.failed)) limit("grounding", 2, "it read nothing");
