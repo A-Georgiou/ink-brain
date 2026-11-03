@@ -342,7 +342,7 @@ const BOARD_ELEMENT = {
             type: "string",
             enum: BOARD_TYPES,
             description:
-                "tex (an equation), text (words), box (a labelled node for diagrams), circle, line, arrow, path, brace (a curly brace with a label beside an element or part), " +
+                "tex (an equation), text (words), box (a labelled node for diagrams), circle (a state or shape, optionally with text), line, arrow, path, brace (a curly brace with a label beside an element or part), " +
                 "axes, plot (the graph of fn on axes), area (the region between fn, or the plot it is on, and lower, across domain; bars makes it Riemann rectangles), dot, vector (an arrow from the origin of axes), tangent (a line touching a plot at x).",
         },
         at: pair("Its centre: board units, or maths coordinates when it is on axes. Numbers can be expressions of vars, such as \"a\" or \"2*a\", so set moves it."),
@@ -354,7 +354,7 @@ const BOARD_ELEMENT = {
         width: { type: "number", description: "box, axes: width in board units. text: the width it wraps at." },
         height: { type: "number", description: "box, axes: height in board units." },
         r: { type: "number", description: "circle, dot: radius; a circle grows if its text needs more room." },
-        from: { description: "line, arrow, vector, brace: [x, y], or the id or id.part of an element to attach to." },
+        from: { description: "line, arrow, vector, brace: [x, y], or the id or id.part of an element to attach to. For diagram links use node ids; the same id at both ends draws a self-loop." },
         to: { description: "line, arrow, vector, brace: [x, y], or the id or id.part of an element to attach to." },
         bend: { type: "number", description: "line, arrow: curvature, about -1 to 1. Opposite attached arrows separate automatically when omitted." },
         points: { type: "array", items: pair("[x, y]"), maxItems: 200, description: "path: its points." },
