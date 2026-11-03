@@ -754,7 +754,9 @@ export async function renderScene(spec, { root, makeLabel, inPlace = false, reso
         if (actions.some((x) => x?.do === "drive")) part.expandByVector(part.getSize(new THREE.Vector3()).multiplyScalar(0.25));
         const [size, whole] = [part.getSize(new THREE.Vector3()), model.getSize(new THREE.Vector3())];
         if (size.length() > whole.length() * 0.7) return frameTo(shown);
-        const keep = new THREE.Vector3(Math.max(size.x, whole.x * 0.4), Math.max(size.y, whole.y * 0.4), Math.max(size.z, whole.z * 0.4));
+        // A small part gets a close-up with a few times its own size around it, not half the model, so it is big enough to inspect.
+        const room = Math.max(size.x, size.y, size.z) * 3.2;
+        const keep = new THREE.Vector3(...["x", "y", "z"].map((axis) => Math.max(size[axis], Math.min(whole[axis] * 0.4, room))));
         frameTo([settle(new THREE.Box3().setFromCenterAndSize(part.getCenter(new THREE.Vector3()), keep), shown)]);
     };
 
