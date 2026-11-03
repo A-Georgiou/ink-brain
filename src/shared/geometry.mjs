@@ -80,7 +80,7 @@ export function snapPoint(shape) {
 const union = (a, b) => a.w * a.h + b.w * b.h - overlapArea(a, [b]);
 
 // Where the line from `from` to the box's centre leaves the box, just outside it.
-function edgeToward(from, box) {
+export function edgeToward(from, box) {
     const [cx, cy] = [box.x + box.w / 2, box.y + box.h / 2];
     const [dx, dy] = [from[0] - cx, from[1] - cy];
     if (Math.abs(dx) <= box.w / 2 && Math.abs(dy) <= box.h / 2) return [cx, cy];

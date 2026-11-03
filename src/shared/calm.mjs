@@ -1,5 +1,5 @@
 // Quiet places on a screenshot: where little is drawn, so a note laid there covers nothing.
-import { isRegion, overlapArea } from "./geometry.mjs";
+import { edgeToward, isRegion, overlapArea } from "./geometry.mjs";
 
 const CELL = 8;
 const EDGE = 30;
@@ -36,9 +36,12 @@ export function inkIn({ cols, rows, sums }, { x, y, w, h }) {
     return at(r1, c1) - at(r0, c1) - at(r1, c0) + at(r0, c0);
 }
 
-// Where a note wanted at box should go: there when it and its line to via cover next to nothing, else the nearest spot that is clearly quieter and keeps off avoid.
-export function quietSpot(grid, box, { view, avoid = [], via = null, reach = 300, step = 12, margin = 12 }) {
-    const weigh = (spot) => inkIn(grid, spot) + (via ? 2 * inkAlong(grid, via, [spot.x + spot.w / 2, spot.y + spot.h / 2], 24) : 0);
+// Where a note wanted at box should go: there when it and its line to via (a point, or a function of the note's centre) cover next to nothing, else the nearest spot that is clearly quieter and keeps off avoid.
+export function quietSpot(grid, box, { view, avoid = [], via = null, skip = 24, reach = 300, step = 12, margin = 12 }) {
+    const weigh = (spot) => {
+        const centre = [spot.x + spot.w / 2, spot.y + spot.h / 2];
+        return inkIn(grid, spot) + (via ? 2 * inkAlong(grid, typeof via === "function" ? via(centre) : via, centre, skip) : 0);
+    };
     const here = weigh(box);
     if (here < 3) return box;
     let best = null;
@@ -57,7 +60,7 @@ export function quietSpot(grid, box, { view, avoid = [], via = null, reach = 300
 const isCallout = (shape) => shape.kind === "callout" && String(shape.text ?? "").trim() && Number.isFinite(shape.x) && Number.isFinite(shape.y);
 const isArrow = (shape) => shape.kind === "arrow" && shape.style !== "both" && [shape.from, shape.to].every((p) => Array.isArray(p) && p.length === 2 && p.every(Number.isFinite));
 
-export const needsSettling = (shapes) => shapes.some((shape) => isCallout(shape) || isArrow(shape));
+export const needsSettling = (shapes) => shapes.some((shape) => isCallout(shape) || isArrow(shape) || (shape.kind === "marker" && shape.target));
 
 // Where a callout's handwriting goes, as the overlay places it: wrapped at 360 pixels, at `at` or up and aside of the target.
 function calloutBox(shape, view) {
@@ -112,15 +115,28 @@ function settleTail(shape, grid, view, aims) {
     return best && best.ink * 2 <= here ? { ...shape, from: best.point } : shape;
 }
 
-// Moves callout handwriting and arrow tails off busy parts of the screen onto quiet ones nearby; they still lead to what they point at.
+// Which corner of a framed control a number badge sits on: the one with the least drawn under it.
+function quietCorner(grid, target, view) {
+    const corners = { tl: [target.x - 2, target.y - 2], tr: [target.x + target.w + 2, target.y - 2], bl: [target.x - 2, target.y + target.h + 2], br: [target.x + target.w + 2, target.y + target.h + 2] };
+    const fits = ([x, y]) => x >= 14 && y >= 14 && x <= view.width - 14 && y <= view.height - 14;
+    const ink = ([x, y]) => inkIn(grid, { x: x - 14, y: y - 14, w: 28, h: 28 });
+    return Object.entries(corners).filter(([, point]) => fits(point)).reduce((best, entry) => (ink(entry[1]) < ink(best[1]) ? entry : best), ["tl", corners.tl])[0];
+}
+
+// Moves callout handwriting, arrow tails and number badges off busy parts of the screen onto quiet ones nearby; they still lead to what they point at.
 export function settleMarks(shapes, grid, view) {
     const aims = shapes.flatMap(keepClear);
     return shapes.map((shape) => {
         if (isArrow(shape)) return settleTail(shape, grid, view, aims);
+        if (shape.kind === "marker" && shape.target) return { ...shape, corner: quietCorner(grid, shape.target, view) };
         if (!isCallout(shape)) return shape;
         const box = calloutBox(shape, view);
-        const spot = quietSpot(grid, box, { view, avoid: aims, via: [shape.x, shape.y] });
+        const { target } = shape;
+        const spot = quietSpot(grid, box, { view, avoid: aims, via: target ? (centre) => edgeToward(centre, target) : [shape.x, shape.y], skip: target ? 8 : 24 });
         aims.push(spot);
-        return spot === box ? shape : { ...shape, at: [spot.x + spot.w / 2, spot.y + spot.h / 2] };
+        if (spot === box) return shape;
+        const centre = [spot.x + spot.w / 2, spot.y + spot.h / 2];
+        const [x, y] = target ? edgeToward(centre, target) : [shape.x, shape.y];
+        return { ...shape, x, y, at: centre };
     });
 }

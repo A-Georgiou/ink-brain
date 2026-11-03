@@ -1,4 +1,4 @@
-// Captures fixtures from the real pages (npm run eval:capture -- [--only id,id] [--force]): Chrome showing the page, the target, the circle and reference text.
+// Captures fixtures from the real pages (npm run eval:capture -- [--only id,id] [--force] [--elements]): Chrome showing the page, the target, the circle and reference text; --elements only records the page's elements for fixtures that lack them, when the page still matches.
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,6 +13,7 @@ const [WIDTH, HEIGHT, CHROME] = [1512, 982, 102];
 const args = process.argv.slice(2);
 const only = args.includes("--only") ? args[args.indexOf("--only") + 1].split(",") : null;
 const force = args.includes("--force");
+const elementsOnly = args.includes("--elements");
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 // Offscreen windows render at exactly this size and scale 1, whatever the display.
 const offscreen = (height) => new BrowserWindow({ show: false, width: WIDTH, height, useContentSize: true, webPreferences: { offscreen: true, backgroundThrottling: false } });
@@ -122,6 +123,15 @@ async function capture(scenario, reader) {
             const { also, decoys } = window.__inkNear;
             return { title: document.title, rect: boxOf(t), also: also.filter(Boolean).map(boxOf), decoys: decoys.filter((e) => e && e !== t).map(boxOf), elements: (${PAGE_ELEMENTS})(), link: ${scenario.link ? `(${scenario.link})()` : "null"} };
         })()`);
+        const place = (r) => ({ x: Math.round(r.x), y: Math.round(r.y + CHROME), w: Math.round(r.w), h: Math.round(r.h) });
+        const saveElements = () => fs.writeFileSync(path.join(FIXTURES, `${scenario.id}.elements.json`), JSON.stringify(facts.elements.map((e) => ({ ...e, ...place(e) }))));
+        if (elementsOnly) {
+            const stored = JSON.parse(fs.readFileSync(path.join(FIXTURES, `${scenario.id}.json`), "utf8")).target;
+            const now = place(facts.rect);
+            if (Object.keys(now).some((key) => Math.abs(now[key] - stored[key]) > 3)) return `${scenario.id.padEnd(16)} skipped: the page no longer matches the fixture`;
+            saveElements();
+            return `${scenario.id.padEnd(16)} recorded ${facts.elements.length} elements`;
+        }
         const shot = await page.webContents.capturePage();
         const frame = offscreen(HEIGHT);
         const html = path.join(FIXTURES, `${scenario.id}.frame.html`);
@@ -131,13 +141,12 @@ async function capture(scenario, reader) {
         fs.writeFileSync(path.join(FIXTURES, `${scenario.id}.jpg`), (await frame.webContents.capturePage()).toJPEG(90));
         frame.destroy();
         fs.rmSync(html);
-        const place = (r) => ({ x: Math.round(r.x), y: Math.round(r.y + CHROME), w: Math.round(r.w), h: Math.round(r.h) });
         const target = place(facts.rect);
         const marks = scenario.mark === false ? [] : circle(target, [...scenario.id].reduce((sum, c) => sum + c.charCodeAt(0), 7));
         const meta = { id: scenario.id, url: scenario.url, title: facts.title, app: "Google Chrome", target, marks, link: facts.link, captured: new Date().toISOString() };
         if (facts.also.length) meta.also = facts.also.map(place);
         if (facts.decoys.length) meta.decoys = facts.decoys.map(place);
-        fs.writeFileSync(path.join(FIXTURES, `${scenario.id}.elements.json`), JSON.stringify(facts.elements.map((e) => ({ ...e, ...place(e) }))));
+        saveElements();
         const refUrl = scenario.reference === "page" ? scenario.url : scenario.reference === "link" ? facts.link : null;
         if (refUrl) {
             const read = await reader.read(refUrl, { allowed: () => true, timeoutMs: 20_000 }).catch((error) => ({ error: error.message }));
@@ -158,7 +167,8 @@ app.whenReady().then(async () => {
     app.userAgentFallback = userAgent;
     const reader = new Reader({ BrowserWindow, session, userAgent });
     for (const scenario of SCENARIOS.filter((s) => !s.fixture && (!only || only.includes(s.id)))) {
-        if (!force && fs.existsSync(path.join(FIXTURES, `${scenario.id}.json`))) continue;
+        const captured = fs.existsSync(path.join(FIXTURES, `${scenario.id}.json`));
+        if (elementsOnly ? !captured : captured && !force) continue;
         console.log(await capture(scenario, reader).catch((error) => `${scenario.id.padEnd(16)} FAILED: ${error.message}`));
     }
     app.quit();

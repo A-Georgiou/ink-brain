@@ -37,17 +37,24 @@ export const PAGE_ELEMENTS = () => {
         if (w >= 2 && h >= 2) out.push({ role, name: String(name).slice(0, 200).replace(/\s+/g, " ").trim().slice(0, 40), x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h) });
     };
     const shown = (e) => e.checkVisibility({ visibilityProperty: true });
-    for (const e of document.body.querySelectorAll("*")) {
-        const role = roleOf(e);
-        if (role && shown(e)) add(role, e.getAttribute("aria-label") || e.title || e.textContent, e.getBoundingClientRect());
+    // Web components keep their parts in shadow roots, which the tree includes.
+    const roots = [document.body];
+    for (const root of roots) {
+        for (const e of root.querySelectorAll("*")) {
+            if (e.shadowRoot) roots.push(e.shadowRoot);
+            const role = roleOf(e);
+            if (role && shown(e)) add(role, e.getAttribute("aria-label") || e.title || e.textContent, e.getBoundingClientRect());
+        }
     }
-    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-    for (let n; (n = walker.nextNode()); ) {
-        const parent = n.parentElement;
-        if (!n.textContent.trim() || !parent || parent.closest("script, style, noscript") || !shown(parent)) continue;
-        const range = document.createRange();
-        range.selectNodeContents(n);
-        add("AXStaticText", n.textContent, range.getBoundingClientRect());
+    for (const root of roots) {
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+        for (let n; (n = walker.nextNode()); ) {
+            const parent = n.parentElement;
+            if (!n.textContent.trim() || !parent || parent.closest("script, style, noscript") || !shown(parent)) continue;
+            const range = document.createRange();
+            range.selectNodeContents(n);
+            add("AXStaticText", n.textContent, range.getBoundingClientRect());
+        }
     }
     out.push({ role: "AXWebArea", name: document.title, x: 0, y: 0, w: innerWidth, h: innerHeight });
     return out;

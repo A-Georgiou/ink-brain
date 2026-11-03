@@ -14,6 +14,8 @@ const measure = document.createElement("canvas").getContext("2d");
 const clamp = (value, min, max) => Math.min(Math.max(value, min), Math.max(min, max));
 const safeColor = (value, fallback = ACCENT) => (typeof value === "string" && CSS.supports("color", value) ? value : fallback);
 const centre = (s) => [s.x + s.w / 2, s.y + s.h / 2];
+// Where a number badge sits on the corner of a control's outline: top left unless told otherwise.
+const badgeSpot = (box, corner = "tl") => [corner.endsWith("r") ? box.x + box.w + 2 : box.x - 2, corner.startsWith("b") ? box.y + box.h + 2 : box.y - 2];
 
 function svg(tag, attrs = {}) {
     const el = document.createElementNS(NS, tag);
@@ -486,8 +488,8 @@ export class Annotations {
         } else if (kind === "label") {
             nodes.push(this.#pill(shape.text ?? "", shape.x, shape.y, color, delay));
         } else if (kind === "marker") {
-            // Beside a control, the number sits on the outline's corner so it never hides the control itself.
-            const [x, y] = shape.target ? [shape.target.x - 2, shape.target.y - 2] : [shape.x, shape.y];
+            // Beside a control, the number sits on a corner of the outline so it never hides the control itself.
+            const [x, y] = shape.target ? badgeSpot(shape.target, shape.corner) : [shape.x, shape.y];
             const el = place(div("anno-marker", (shape.text || String(++this.#markers)).slice(0, 4)), x, y, delay);
             el.style.setProperty("--c", color);
             this.labels.append(el);

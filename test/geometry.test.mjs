@@ -218,6 +218,7 @@ test("callouts and arrow tails settle onto quiet parts of the screen, keep off w
     assert.ok(tail.from[1] > 200 && inkIn(grid, { x: tail.from[0] - 12, y: tail.from[1] - 12, w: 24, h: 24 }) === 0);
     const joined = { kind: "arrow", from: [330, 150], to: [200, 215] };
     assert.equal(settleMarks([joined, { kind: "circle", x: 320, y: 140, w: 20, h: 20 }], grid, view)[0], joined);
+    assert.equal(settleMarks([{ kind: "marker", x: 210, y: 215, text: "1", target: { x: 200, y: 205, w: 20, h: 20 } }], grid, view)[0].corner, "bl");
 });
 
 test("3D stages take the most free room beside the circled thing and only ever clip a corner of it", () => {
