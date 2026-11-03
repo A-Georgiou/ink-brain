@@ -490,7 +490,7 @@ export class Annotations {
         } else if (kind === "marker") {
             // Beside a control, the number sits on a corner of the outline so it never hides the control itself.
             const [x, y] = shape.target ? badgeSpot(shape.target, shape.corner) : [shape.x, shape.y];
-            const el = place(div("anno-marker", (shape.text || String(++this.#markers)).slice(0, 4)), x, y, delay);
+            const el = place(div("anno-marker", (shape.text || String(++this.#markers)).slice(0, 10)), x, y, delay);
             el.style.setProperty("--c", color);
             this.labels.append(el);
             nodes.push(el);
