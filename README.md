@@ -6,6 +6,8 @@
 
 An always-on companion for your Mac, built on GitHub Copilot. It sees what you point at, answers out loud and draws the explanation right on your screen.
 
+**[inkbrain.app](https://inkbrain.app)**
+
 [![macOS 14+](https://img.shields.io/badge/macOS-14%2B-000000?logo=apple&logoColor=white)](#requirements)
 [![GitHub Copilot SDK](https://img.shields.io/badge/GitHub_Copilot_SDK-8957e5?logo=githubcopilot&logoColor=white)](https://github.com/github/copilot-sdk)
 [![Electron](https://img.shields.io/badge/Electron-47848f?logo=electron&logoColor=white)](https://www.electronjs.org)
