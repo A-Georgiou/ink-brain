@@ -1124,6 +1124,7 @@ function build(spec, world, katex) {
         watchText(item, fresh);
         item.nodes.splice(item.nodes.indexOf(old), 1, fresh);
         item.node = fresh;
+        place(item);
         if (!item.shown || (duration <= 0 && delay <= 0)) return old.remove();
         fresh.dataset.held = "1";
         let ghosts = null;
@@ -1201,6 +1202,7 @@ function build(spec, world, katex) {
             if (old.dataset.anchor !== undefined) fresh.dataset.anchor = old.dataset.anchor;
             item.nodes.splice(item.nodes.indexOf(inputNodeOf(item, old)), 1);
             item.node = fresh;
+            place(item);
             if (item.rect) sizeBox(item);
             if (item.def.type === "circle") sizeCircle(item);
             if (!item.shown || (duration <= 0 && delay <= 0)) return old.remove();
@@ -1379,6 +1381,7 @@ function build(spec, world, katex) {
         status: () => ({ index: played, settled: !tweens.length && settle <= 0 && !easing }),
         step(index) {
             if (!Number.isInteger(index) || index <= played || index >= steps.length) return;
+            now = performance.now() / 1000;
             for (let i = played + 1; i <= index; i++) {
                 const list = Array.isArray(steps[i]) ? steps[i] : [];
                 if (list.some((a) => a?.do === "flow")) {
@@ -1388,6 +1391,7 @@ function build(spec, world, katex) {
             }
             played = index;
             settle = 2;
+            this.frame(now);
         },
         addSteps(more) {
             steps.push(...more);
@@ -1506,8 +1510,10 @@ export async function renderBoard(spec, { root }) {
         timer = setTimeout(tick, 2500);
     }
     let raf = 0;
+    let pump = 0;
     const loop = () => {
-        raf = requestAnimationFrame(loop);
+        cancelAnimationFrame(raf);
+        clearTimeout(pump);
         const changed = board.frame(performance.now() / 1000);
         const status = refitPreview && board.status();
         // Forget the preview's temporary bounds once its first narrated view has settled.
@@ -1516,22 +1522,29 @@ export async function renderBoard(spec, { root }) {
             refitPreview = false;
         }
         if (changed || !envelope) updateEnvelope();
+        raf = requestAnimationFrame(loop);
+        if (changed) pump = setTimeout(loop, 36);
     };
     loop();
     const resize = new ResizeObserver(fit);
     resize.observe(root);
     return {
-        step: (index) => board.step(index),
+        step(index) {
+            board.step(index);
+            loop();
+        },
         status: () => board.status(),
         // Replay and step-back rebuild to that step, because a board only plays forward.
         goto(index) {
             board.dispose();
             board = build(spec, world, katex);
             if (Number.isInteger(index) && index >= 0) board.step(index);
+            loop();
         },
         addSteps(more) {
             refitPreview ||= !steps.length && board.status().index < 0 && more.length > 0;
             board.addSteps(more);
+            loop();
         },
         setInset(px) {
             const h = root.clientHeight || innerHeight;
@@ -1542,6 +1555,7 @@ export async function renderBoard(spec, { root }) {
         },
         dispose() {
             cancelAnimationFrame(raf);
+            clearTimeout(pump);
             clearTimeout(timer);
             resize.disconnect();
             board.dispose();
