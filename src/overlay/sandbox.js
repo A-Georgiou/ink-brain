@@ -6,6 +6,7 @@ let stage = null;
 let pendingStep = -1;
 let pendingSteps = [];
 let pendingInset = null;
+let rendering = Promise.resolve();
 
 const report = (message) => parent.postMessage(message, "*");
 const describe = (error) => String(error?.message ?? error).slice(0, 2000);
@@ -13,7 +14,7 @@ const describe = (error) => String(error?.message ?? error).slice(0, 2000);
 addEventListener("error", (event) => report({ type: "error", message: describe(event.error ?? event.message) }));
 addEventListener("unhandledrejection", (event) => report({ type: "error", message: describe(event.reason) }));
 
-addEventListener("message", async (event) => {
+addEventListener("message", (event) => {
     if (event.source !== parent || !event.data || typeof event.data !== "object") return;
     // Narration advances a scene; steps that arrive while it builds play once it is ready.
     if (event.data.type === "steps") {
@@ -39,17 +40,23 @@ addEventListener("message", async (event) => {
         else pendingInset = event.data.px;
         return;
     }
-    const { kind, content, image } = event.data;
-    const inPlace = event.data.inPlace === true;
+    rendering = rendering.then(() => render(event.data));
+});
+
+async function render(data) {
+    const { kind, content, image, renderId } = data;
+    const inPlace = data.inPlace === true;
     const imageUrl = typeof image === "string" && image.startsWith("data:image/") ? image : null;
+    const previous = stage;
+    const resources = kind === "scene" ? previous?.resources : null;
     try {
-        dispose?.();
+        if (!resources) dispose?.();
         dispose = null;
         stage = null;
         pendingStep = -1;
         pendingSteps = [];
         pendingInset = null;
-        root.replaceChildren();
+        if (!resources) root.replaceChildren();
         root.className = "";
         if (kind === "mermaid") await renderMermaid(String(content));
         else if (kind === "three") dispose = await renderThree(String(content), imageUrl, inPlace);
@@ -57,19 +64,26 @@ addEventListener("message", async (event) => {
             const spec = JSON.parse(String(content));
             stage =
                 kind === "scene"
-                    ? await (await import("./scene.js")).renderScene(spec, { root, makeLabel, inPlace })
+                    ? await (await import("./scene.js")).renderScene(spec, { root, makeLabel, inPlace, resources })
                     : await (await import("./board.js")).renderBoard(spec, { root });
+            if (resources) previous.dispose(true);
             dispose = stage.dispose;
             if (pendingInset !== null) stage.setInset?.(pendingInset);
             if (pendingSteps.length) stage.addSteps(pendingSteps.splice(0));
             if (pendingStep >= 0) stage.step(pendingStep);
         } else if (kind === "html") return renderHtml(String(content), imageUrl);
         else throw new Error(`Unsupported panel kind: ${kind}`);
-        report({ type: "rendered" });
+        report({ type: "rendered", renderId });
     } catch (error) {
-        report({ type: "error", message: describe(error) });
+        if (resources) {
+            previous.dispose();
+            root.replaceChildren();
+        }
+        stage = null;
+        dispose = null;
+        report({ type: "error", renderId, message: describe(error) });
     }
-});
+}
 
 function loadScript(src) {
     return new Promise((resolve, reject) => {

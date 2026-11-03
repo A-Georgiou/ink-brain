@@ -125,17 +125,28 @@ export class Surface {
     }
 
     // Shows a motion-graphics scene; an explanation passes its per-step actions and drives the steps itself.
-    async scene(args, steps = null) {
+    async scene(args, steps = null, pictures = null, signal = null) {
         const scene = args.scene;
         const actions = steps ?? (Array.isArray(scene?.steps) ? scene.steps : []);
         const problem = validateScene(scene, actions);
         if (problem) return { text: `The scene was not shown: ${problem}.`, failed: true };
         const objects = [];
+        const capture = (region) => {
+            const key = [region.x, region.y, region.w, region.h].join(",");
+            if (pictures?.has(key)) return pictures.get(key);
+            const pending = Promise.resolve().then(() => this.regionImage?.(region)).catch(() => null).then((image) => {
+                if (!image) pictures?.delete(key);
+                return image;
+            });
+            pictures?.set(key, pending);
+            return pending;
+        };
         for (const object of scene.objects) {
+            signal?.throwIfAborted();
             const traceable = object.type === "loft" && isRegion(object.region) && !(Array.isArray(object.outline) && object.outline.length >= 3);
             if (object.type === "base" || traceable) {
                 // A base wears its own picture, so it looks like the user's very one, and a base or loft without an outline is traced from it.
-                objects.push({ ...object, picture: await Promise.resolve(this.regionImage?.(object.region)).catch(() => null) });
+                objects.push({ ...object, picture: await capture(object.region) });
             } else if (object.type !== "image") objects.push(object);
             else {
                 try {
@@ -145,6 +156,7 @@ export class Surface {
                 }
             }
         }
+        signal?.throwIfAborted();
         const content = JSON.stringify({ view: scene.view, camera: scene.camera, objects, mechanisms: scene.mechanisms, steps: actions, autoplay: !steps, stepSeconds: scene.step_seconds, loop: scene.loop });
         return this.#showPanel(args, "scene", content);
     }
@@ -198,7 +210,7 @@ export class Surface {
         const source = isRegion(args.image_region) ? args.image_region : over;
         const image = source && (kind === "three" || kind === "html") ? await this.regionImage(source).catch(() => null) : null;
         const title = String(args.title ?? "").slice(0, 120);
-        const result = await this.overlayCall("panel", { id, kind, title, content, rect: panelRect(args, over, scale), frameless: Boolean(over), image }, 25_000);
+        const result = await this.overlayCall("panel", { id, kind, title, content, rect: panelRect(args, over, scale), frameless: Boolean(over), image, building: args.building === true }, 25_000);
         if (!result?.ok) {
             return { text: `The ${kind} panel "${id}" failed to render: ${result?.error ?? "unknown error"}. Fix it and call live_panel again with id "${id}".`, failed: true, id };
         }

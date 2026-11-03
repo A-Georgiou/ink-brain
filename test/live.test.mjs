@@ -11,6 +11,7 @@ import { createCheckWaiter, describeAnswer, normalizeCheck, validateCheck } from
 import { clearStaleGrants } from "../src/main/helper.mjs";
 import { readImageFile } from "../src/main/images.mjs";
 import { Voice } from "../src/main/voice.mjs";
+import { ArgumentStream } from "../src/shared/stream.mjs";
 
 test("images can only be read from Copilot's own image folders", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "ink-brain-images-"));
@@ -52,7 +53,7 @@ function explainer(caption = () => {}) {
         return line;
     };
     const player = new ExplainPlayer({ surface, speak, caption, hush: () => log.push("hush") });
-    return { player, log, lines };
+    return { player, surface, log, lines };
 }
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -117,18 +118,160 @@ test("a streamed explanation starts once its stage and first step are written, a
     const cut = text.indexOf('{"say":"Up"');
     assert.equal([...text.slice(0, cut)].map((c) => player.feed("call-1", c)).filter(Boolean).length, 1);
     await tick();
-    assert.deepEqual(log, ["scene explain-1-scene 1"]);
+    assert.deepEqual(log, ["scene explain-1-scene ", "add explain-1-scene 1"]);
     lines[0].start();
     await tick();
-    assert.deepEqual(log.slice(1), ["start Down", "step explain-1-scene 0"]);
+    assert.deepEqual(log.slice(2), ["start Down", "step explain-1-scene 0"]);
     for (const c of text.slice(cut)) player.feed("call-1", c);
     const played = player.play(args, "call-1");
     lines[0].end();
     lines[1].start();
     await tick();
-    assert.deepEqual(log.slice(3), ["end Down", "start Up", "add explain-1-scene 1", "step explain-1-scene 1"]);
+    assert.deepEqual(log.slice(4), ["end Down", "start Up", "add explain-1-scene 1", "step explain-1-scene 1"]);
     lines[1].end();
     assert.match((await played).text, /Narrated all 2 steps/);
+});
+
+test("nested argument streams report whole objects at every chunk boundary without confusing escaped text or arrays", () => {
+    const object = { id: "part", type: "box", label: 'A "part" } ] \\\\ end', size: [1, 2, 3], hidden: false };
+    const args = { title: "Test", scene: { camera: { target: [0, 0, 0] }, objects: [object] }, steps: [{ say: "Look", scene: [] }] };
+    const text = JSON.stringify(args);
+    for (let split = 0; split <= text.length; split++) {
+        const reader = new ArgumentStream("steps", { scene: "objects" });
+        const entries = [...reader.push(text.slice(0, split)), ...reader.push(text.slice(split))];
+        assert.deepEqual(entries.filter((entry) => entry.item).map(({ key, field, json }) => [field ? `${key}.${field}` : key, JSON.parse(json)]), [["scene.objects", object], ["steps", args.steps[0]]]);
+        assert.deepEqual(JSON.parse(entries.find((entry) => entry.key === "scene" && !entry.field).json), args.scene);
+    }
+});
+
+test("previews require visible parts rather than cycles or construction cutters", async () => {
+    const { player, log } = explainer();
+    player.feed("cyclic", JSON.stringify({ scene: { objects: [{ id: "base", type: "base", region: { x: 0, y: 0, w: 100, h: 100 }, on: "base", at: [10, 10] }] } }));
+    player.feed("hidden", JSON.stringify({ scene: { objects: [{ id: "mask", type: "box" }, { id: "body", type: "box", cut: ["mask"], hidden: true }] } }));
+    await tick();
+    assert.deepEqual(log, []);
+    player.close();
+});
+
+test("scene previews skip bare cutters, grow before the scene closes and adopt the completed stage", async () => {
+    const { player, surface, lines } = explainer();
+    const shown = [];
+    surface.scene = async (args, steps) => (shown.push([args.scene.objects.map((object) => object.id), steps]), { id: args.id });
+    const scene = { objects: [{ id: "cutter", type: "box" }, { id: "body", type: "cylinder", label: "Housing", cut: ["cutter"] }, { id: "pin", type: "sphere", parent: "body" }] };
+    player.feed("growing", '{"title":"Growing","scene":{"objects":[' + JSON.stringify(scene.objects[0]) + ",");
+    await tick();
+    assert.deepEqual(shown, []);
+    assert.equal(lines.length, 0);
+    player.feed("growing", JSON.stringify(scene.objects[1]) + ",");
+    await tick();
+    assert.deepEqual(shown, [[["cutter", "body"], []]]);
+    player.feed("growing", JSON.stringify(scene.objects[2]) + "]},");
+    await tick();
+    assert.deepEqual(shown.at(-1), [["cutter", "body", "pin"], []]);
+    player.feed("growing", '"steps":[{"say":"Ready","scene":[{"do":"highlight","target":"pin"}]}]}');
+    await tick();
+    assert.equal(shown.length, 2);
+    const played = player.play({ scene, steps: [{ say: "Ready", scene: [{ do: "highlight", target: "pin" }] }] }, "growing");
+    lines[0].start();
+    lines[0].end();
+    assert.match((await played).text, /Narrated all 1 steps/);
+});
+
+test("previews wait for dependencies and visible content, and cancellation clears an in-flight preview", async () => {
+    const { player, surface, lines } = explainer();
+    const shown = [];
+    const cleared = [];
+    let finish;
+    surface.scene = (args) => {
+        shown.push(args.scene.objects.map((object) => object.id));
+        return new Promise((resolve) => (finish = () => resolve({ id: args.id })));
+    };
+    surface.execute = async (_name, args) => cleared.push(args.id);
+    player.feed("waiting", '{"scene":{"objects":[{"id":"shell","type":"group"},');
+    await tick();
+    assert.equal(shown.length, 0);
+    player.feed("waiting", '{"id":"outline","type":"loft","region":{"x":0,"y":0,"w":100,"h":100},"opacity":0.16},');
+    await tick();
+    assert.equal(shown.length, 0);
+    player.feed("waiting", '{"id":"pin","type":"sphere","parent":"later","label":"Pin"},');
+    await tick();
+    assert.equal(shown.length, 0);
+    player.feed("waiting", '{"id":"later","type":"group"}');
+    await tick();
+    assert.equal(shown.length, 1);
+    player.cancel();
+    await tick();
+    assert.ok(cleared.includes("explain-1-scene"));
+    finish();
+    await tick();
+    player.feed("waiting", ']},"steps":[{"say":"Late"}]}');
+    await tick();
+    assert.ok(cleared.includes("explain-1-scene"));
+    assert.equal(lines.length, 0);
+    assert.equal(shown.length, 1);
+    player.close();
+    player.feed("waiting", '{"scene":{"objects":[{"id":"late","type":"sphere"}]}}');
+    await tick();
+    assert.equal(shown.length, 1);
+    await player.play({ scene: { objects: [{ id: "late", type: "sphere" }] }, steps: [{ say: "Late" }] }, "waiting");
+    assert.equal(shown.length, 1);
+    assert.equal(lines.length, 0);
+});
+
+test("a failed preview is cleared and the complete scene still gets a normal render attempt", async () => {
+    const { player, surface, lines } = explainer();
+    let attempts = 0;
+    const cleared = [];
+    surface.scene = async (args) => (++attempts === 1 ? { failed: true } : { id: args.id });
+    surface.execute = async (_name, args) => cleared.push(args.id);
+    const scene = { objects: [{ id: "body", type: "box", label: "Body" }] };
+    player.feed("retry", '{"scene":' + JSON.stringify(scene) + ",");
+    await tick();
+    assert.ok(cleared.includes("explain-1-scene"));
+    player.feed("retry", '"steps":[{"say":"Ready"}]}');
+    await tick();
+    assert.equal(attempts, 2);
+    const played = player.play({ scene, steps: [{ say: "Ready" }] }, "retry");
+    lines[0].start();
+    lines[0].end();
+    assert.match((await played).text, /Narrated all 1 steps/);
+});
+
+test("boards wait for the first narrated step instead of opening an empty pre-narration frame", async () => {
+    const { player, surface, lines, log } = explainer();
+    let opens = 0;
+    surface.board = async (args) => (++opens, { id: args.id });
+    const board = { elements: [{ id: "eq", type: "tex", tex: "x=1" }] };
+    player.feed("board", '{"title":"Equation","board":' + JSON.stringify(board) + ",");
+    await tick();
+    assert.equal(opens, 0);
+    assert.equal(lines.length, 0);
+    player.feed("board", '"steps":[{"say":"One","board":[{"do":"highlight","target":"eq"}]}]}');
+    await tick();
+    const played = player.play({ title: "Equation", board, steps: [{ say: "One" }] }, "board");
+    assert.equal(opens, 1);
+    assert.ok(!log.some((entry) => entry.startsWith("add ")));
+    lines[0].start();
+    lines[0].end();
+    await played;
+});
+
+test("starting an explanation does not discard another call still writing its scene", async () => {
+    const { player, lines } = explainer();
+    const scene = { objects: [{ id: "body", type: "box", label: "Body" }] };
+    player.feed("growing", '{"scene":' + JSON.stringify(scene) + ",");
+    const first = player.play({ steps: [{ say: "First" }] }, "ready");
+    await tick();
+    lines[0].start();
+    lines[0].end();
+    await first;
+    player.feed("growing", '"steps":[{"say":"Next"}]}');
+    await tick();
+    assert.equal(lines.length, 2);
+    const next = player.play({ scene, steps: [{ say: "Next" }] }, "growing");
+    lines[1].start();
+    lines[1].end();
+    assert.match((await next).text, /Narrated all 1 steps/);
 });
 
 test("a streamed explanation whose call never finishes plays the steps it has once the turn closes", async () => {

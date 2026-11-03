@@ -3,6 +3,7 @@
 import { playableBoardSteps } from "../shared/board.mjs";
 import { playableSteps } from "../shared/scene.mjs";
 import { ArgumentStream } from "../shared/stream.mjs";
+import { ScenePreview } from "./preview.mjs";
 import { cleanId } from "./surface.mjs";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms).unref?.());
@@ -205,6 +206,14 @@ export class ExplainPlayer {
     }
 
     cancel(reason = "interrupted") {
+        for (const stream of this.#streams.values()) {
+            stream.cancelled = true;
+            if (!stream.run?.stage) stream.preview?.stop(true).catch(() => {});
+        }
+        this.#stopRun(reason);
+    }
+
+    #stopRun(reason) {
         if (!this.#run || this.#run.stopped) return;
         this.#run.stopped = reason;
         this.#run.wake();
@@ -214,13 +223,25 @@ export class ExplainPlayer {
     feed(callId, chunk) {
         if (this.#finished.has(callId)) return false;
         let stream = this.#streams.get(callId);
-        if (!stream) this.#streams.set(callId, (stream = { reader: new ArgumentStream("steps"), head: {}, steps: [], run: null }));
-        if (stream.broken) return false;
+        if (!stream) this.#streams.set(callId, (stream = { reader: new ArgumentStream("steps", { scene: "objects" }), head: {}, steps: [], run: null }));
+        if (stream.broken || stream.cancelled) return false;
+        let changed = null;
+        let complete = false;
         try {
-            for (const { key, json, item } of stream.reader.push(chunk)) {
-                if (item) stream.steps.push(objectOf(json));
+            for (const { key, field, json, item } of stream.reader.push(chunk)) {
+                if (item && key === "steps") stream.steps.push(objectOf(json));
                 else if (key === "title" || key === "id") stream.head[key] = JSON.parse(json);
-                else if (key === "scene" || key === "board") stream.head[key] = objectOf(json);
+                else if (key === "scene" || key === "board") {
+                    changed = key;
+                    if (!field) {
+                        stream.head[key] = objectOf(json);
+                        complete = true;
+                    } else {
+                        const spec = (stream.head[key] ??= {});
+                        if (item) (spec[field] ??= []).push(objectOf(json));
+                        else spec[field] = objectOf(json);
+                    }
+                }
             }
         } catch {
             stream.broken = true;
@@ -230,21 +251,33 @@ export class ExplainPlayer {
             for (const step of stream.steps.splice(0)) stream.run.add(step);
             return false;
         }
-        if (!spoken(stream.steps[0])) return false;
-        stream.run = this.#begin(stream.head, stream.steps.splice(0));
+        if (!spoken(stream.steps[0])) {
+            if (changed === "scene") {
+                stream.preview ??= new ScenePreview(++this.#count, this.surface);
+                stream.preview.offer(stream.head.scene, String(stream.head.title ?? ""), complete);
+            }
+            return false;
+        }
+        stream.run = this.#begin(stream.head, stream.steps.splice(0), stream);
         return true;
     }
 
     // Ends explanations whose call never finished, such as when the turn stopped; they play the steps they have.
     close() {
-        for (const stream of this.#streams.values()) stream.run?.end();
+        for (const [id, stream] of this.#streams) {
+            this.#finished.add(id);
+            if (stream.run) stream.run.end();
+            else stream.preview?.stop(true).catch(() => {});
+        }
         this.#streams.clear();
-        this.#finished.clear();
+        while (this.#finished.size > 256) this.#finished.delete(this.#finished.values().next().value);
     }
 
     // Plays a finished live_explain call; one already playing from its streamed arguments carries on with them.
     async play({ title, steps, scene, board, id }, callId) {
-        const run = this.#streams.get(callId)?.run;
+        if (callId && this.#finished.has(callId)) return { text: "This explanation was already handled; no duplicate was started." };
+        const stream = this.#streams.get(callId);
+        const run = stream?.run;
         this.#streams.delete(callId);
         if (callId) this.#finished.add(callId);
         if (run) {
@@ -254,20 +287,23 @@ export class ExplainPlayer {
             return run.done;
         }
         const problem = validateSteps(steps);
-        if (problem) return { text: `Nothing was explained: ${problem}.`, failed: true };
-        const fresh = this.#begin({ title, scene, board, id }, steps);
+        if (problem || stream?.cancelled) {
+            await stream?.preview?.stop(true);
+            return { text: `Nothing was explained: ${problem ?? "interrupted"}.`, failed: true };
+        }
+        const fresh = this.#begin({ title, scene, board, id }, steps, stream);
         fresh.end();
         return fresh.done;
     }
 
-    #begin(head, steps) {
-        this.cancel("replaced");
+    #begin(head, steps, stream = null) {
+        this.#stopRun("replaced");
         this.#cut = false;
         this.#playback = new Playback();
-        const run = new Run(++this.#count, this.speak);
+        const run = new Run(stream?.preview?.id ?? ++this.#count, this.speak);
         this.#run = run;
         for (const step of steps) run.add(step);
-        run.done = this.#perform(run, head).finally(() => {
+        run.done = this.#perform(run, head, stream?.preview).finally(() => {
             if (this.#run === run) this.#run = null;
         });
         return run;
@@ -300,10 +336,18 @@ export class ExplainPlayer {
         run.notes.push(...added.problems);
     }
 
-    async #perform(run, { title, scene, board, id }) {
+    async #perform(run, { title, scene, board, id }, preview = null) {
         const group = `explain-${run.id}`;
+        const early = await preview?.stop();
+        if (run.stopped) {
+            await preview?.stop(true);
+            return { text: "The user interrupted the explanation before it started." };
+        }
         // The stage is a 3D scene or a 2D board, shown in a panel and stepped along with the narration.
         const kind = scene ? "scene" : board ? "board" : null;
+        // A streamed preview is kept only when it already sits in the panel this stage goes to.
+        const target = kind && (cleanId(id) || `${group}-${kind}`);
+        if (early && (early.kind !== kind || early.id !== target)) await preview.stop(true);
         // With an id and no new stage, it carries on with the one already on screen: the model stays and the new steps play on from where it stopped.
         const carried = !kind && id ? this.#stages.get(cleanId(id)) : null;
         if (carried) run.stage = { ...carried, sent: 0 };
@@ -312,8 +356,16 @@ export class ExplainPlayer {
             const spec = scene ?? board;
             const playable = this.#playable(kind, spec, run.steps);
             const placement = { x: spec.x, y: spec.y, width: spec.width, height: spec.height, over: spec.over };
-            const shown = playable.problem ? { failed: true, text: playable.problem } : await this.surface[kind]({ id: cleanId(id) || `${group}-${kind}`, title: String(title ?? ""), ...placement, [kind]: spec }, playable.steps);
-            if (shown.failed) return { text: `Nothing was explained, fix the ${kind} first: ${shown.text}`, failed: true };
+            const reused = early?.kind === kind && early.id === target && early.spec === spec && early.title === String(title ?? "");
+            const shown = playable.problem ? { failed: true, text: playable.problem } : reused ? early : await this.surface[kind]({ id: target, title: String(title ?? ""), ...placement, [kind]: spec }, playable.steps, preview?.pictures);
+            if (shown.failed) {
+                await preview?.stop(true);
+                return { text: `Nothing was explained, fix the ${kind} first: ${shown.text}`, failed: true };
+            }
+            if (reused) {
+                const added = await this.surface.addSteps(shown.id, playable.steps, { board: kind === "board" ? spec : null });
+                run.notes.push(...added.problems);
+            }
             run.stage = { id: shown.id, kind, spec, offset: 0, sent: playable.steps.length };
             run.notes.push(...playable.dropped);
             if (scene && board) run.notes.push("the board was left out because a scene was given; use one stage per explanation");

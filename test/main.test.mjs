@@ -109,6 +109,44 @@ test("renders over a region cover it exactly and receive its pixels", async () =
     assert.equal(calls[0].params.image, "data:image/jpeg;base64,AAAA");
 });
 
+test("scene previews reuse successful source captures within an explanation, but retry failures", async () => {
+    const { surface, calls } = surfaceWith({ ok: true });
+    let captures = 0;
+    surface.regionImage = async () => {
+        if (++captures === 1) throw new Error("capture not ready");
+        return "data:image/jpeg;base64,AAAA";
+    };
+    const pictures = new Map();
+    const body = { id: "body", type: "base", region: { x: 10, y: 20, w: 100, h: 80 } };
+    const args = { id: "growing", scene: { objects: [body] } };
+    await surface.scene(args, [], pictures);
+    assert.equal(JSON.parse(calls.at(-1).params.content).objects[0].picture, null);
+    await surface.scene(args, [], pictures);
+    await surface.scene({ ...args, scene: { objects: [{ ...body }, { ...body, id: "copy", region: { ...body.region } }] } }, [], pictures);
+    assert.equal(captures, 2);
+    assert.ok(JSON.parse(calls.at(-1).params.content).objects.every((object) => object.picture === "data:image/jpeg;base64,AAAA"));
+    await surface.scene(args, [], new Map());
+    assert.equal(captures, 3);
+});
+
+test("cancelling a scene during capture never opens a late preview panel", async () => {
+    const { surface, calls } = surfaceWith({ ok: true });
+    let finish;
+    const started = new Promise((resolve) => {
+        surface.regionImage = () => new Promise((done) => {
+            finish = done;
+            resolve();
+        });
+    });
+    const controller = new AbortController();
+    const rendering = surface.scene({ scene: { objects: [{ id: "body", type: "base", region: { x: 0, y: 0, w: 100, h: 100 } }] } }, [], new Map(), controller.signal);
+    await started;
+    controller.abort();
+    finish("data:image/jpeg;base64,AAAA");
+    await assert.rejects(rendering, { name: "AbortError" });
+    assert.deepEqual(calls, []);
+});
+
 test("a board's equations are typeset before it is shown, so TeX mistakes go straight back to the model", async () => {
     const { surface, calls } = surfaceWith({ ok: true });
     const broken = await surface.execute("live_panel", { kind: "board", board: { elements: [{ id: "eq", type: "tex", tex: "\\frac{1}{" }] } });

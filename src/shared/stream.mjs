@@ -1,5 +1,4 @@
-// Reads a tool call's JSON arguments while they stream in, reporting each top-level field once its value is complete
-// and each object in one list field as soon as it closes, so work can start before the call is finished.
+// Reports completed fields and list objects before the rest of a tool call has arrived.
 export class ArgumentStream {
     #text = "";
     #at = 0;
@@ -10,17 +9,27 @@ export class ArgumentStream {
     #key = null;
     #start = -1;
     #item = -1;
+    #child = null;
 
-    constructor(list) {
+    constructor(list, nested = {}) {
         this.list = list;
+        this.nested = nested;
     }
 
-    // Appends a chunk and returns what it completed, in order: { key, json } for fields and { key, json, item: true } for list items.
+    // Completed values carry key and json, plus item for list entries and field for a nested object's fields.
     push(chunk) {
         this.#text += chunk;
         const text = this.#text;
         const done = [];
+        const flush = (end) => {
+            const child = this.#child;
+            if (!child) return;
+            for (const entry of child.reader.push(text.slice(child.at, end))) done.push({ ...entry, key: child.key, field: entry.key });
+            child.at = end;
+        };
         const field = (end) => {
+            flush(end);
+            this.#child = null;
             done.push({ key: this.#key, json: text.slice(this.#start, end).trim() });
             this.#expect = "comma";
         };
@@ -43,7 +52,10 @@ export class ArgumentStream {
                 this.#string = i;
                 if (this.#depth === 1 && this.#expect === "value") [this.#start, this.#expect] = [i, "string"];
             } else if (c === "{" || c === "[") {
-                if (this.#depth === 1 && this.#expect === "value") [this.#start, this.#expect] = [i, "nested"];
+                if (this.#depth === 1 && this.#expect === "value") {
+                    [this.#start, this.#expect] = [i, "nested"];
+                    if (c === "{" && Object.hasOwn(this.nested, this.#key)) this.#child = { key: this.#key, at: i, reader: new ArgumentStream(this.nested[this.#key]) };
+                }
                 else if (this.#depth === 2 && c === "{" && this.#key === this.list && text[this.#start] === "[") this.#item = i;
                 this.#depth++;
             } else if (c === "}" || c === "]") {
@@ -61,6 +73,7 @@ export class ArgumentStream {
                 } else if (this.#expect === "value" && !/\s/.test(c)) [this.#start, this.#expect] = [i, "primitive"];
             }
         }
+        flush(text.length);
         return done;
     }
 }

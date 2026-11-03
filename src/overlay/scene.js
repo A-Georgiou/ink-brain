@@ -110,21 +110,23 @@ const within = (obj, node) => {
 };
 
 // spec: { view, camera, objects, steps, autoplay, stepSeconds, loop }; returns { step(index), dispose() }.
-export async function renderScene(spec, { root, makeLabel, inPlace = false }) {
+export async function renderScene(spec, { root, makeLabel, inPlace = false, resources = null }) {
     const size = () => [root.clientWidth || innerWidth, Math.max(1, root.clientHeight || innerHeight)];
     const [width, height] = size();
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-    renderer.setPixelRatio(devicePixelRatio);
-    renderer.setSize(width, height);
+    const renderer = resources?.renderer ?? new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    if (!resources) {
+        renderer.setPixelRatio(devicePixelRatio);
+        renderer.setSize(width, height);
+    }
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    root.append(renderer.domElement);
+    if (renderer.domElement.parentNode !== root) root.append(renderer.domElement);
     // A soft studio backdrop, so dark parts stand out; a scene laid over the screen stays see-through.
-    if (!inPlace) root.style.background = "radial-gradient(ellipse at 50% 40%, #3a4352 0%, #1d222b 58%, #0d1117 100%)";
+    root.style.background = inPlace ? "" : "radial-gradient(ellipse at 50% 40%, #3a4352 0%, #1d222b 58%, #0d1117 100%)";
 
     const scene = new THREE.Scene();
-    const pmrem = new THREE.PMREMGenerator(renderer);
-    const environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    const pmrem = resources?.pmrem ?? new THREE.PMREMGenerator(renderer);
+    const environment = resources?.environment ?? pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
     scene.environment = environment;
     // Softer studio reflections keep colours true, so dark plastics, boards and metals do not wash out.
     scene.environmentIntensity = 0.6;
@@ -136,7 +138,7 @@ export async function renderScene(spec, { root, makeLabel, inPlace = false }) {
 
     // Labels are callouts drawn on a 2D layer over the model, so they stay crisp and can point from beside it.
     const ink = document.createElement("canvas");
-    ink.style.cssText = "position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none";
+    ink.style.cssText = "position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none;opacity:0";
     if (getComputedStyle(root).position === "static") root.style.position = "relative";
     root.append(ink);
     const pen = ink.getContext("2d");
@@ -660,7 +662,7 @@ export async function renderScene(spec, { root, makeLabel, inPlace = false }) {
     camera.updateProjectionMatrix();
     camera.position.copy(home.position);
     controls.target.copy(home.target);
-    controls.autoRotate = !flat && !steps.length;
+    controls.autoRotate = !flat && !steps.length && spec.autoplay !== false;
     controls.autoRotateSpeed = 0.8;
 
     for (const item of items.values()) if (item.def.label) attachLabel(item, item.def.label);
@@ -1181,6 +1183,7 @@ export async function renderScene(spec, { root, makeLabel, inPlace = false }) {
         renderer.render(scene, camera);
         drawLabels(dt);
     };
+    ink.style.opacity = "1";
     loop();
     const resize = new ResizeObserver(() => {
         const [w, h] = size();
@@ -1189,6 +1192,7 @@ export async function renderScene(spec, { root, makeLabel, inPlace = false }) {
     });
     resize.observe(root);
     return {
+        resources: { renderer, pmrem, environment },
         step,
         goto(index) {
             reset();
@@ -1203,15 +1207,27 @@ export async function renderScene(spec, { root, makeLabel, inPlace = false }) {
             applyView();
             if (framed) frameTo(framed, 0.5);
         },
-        dispose() {
+        dispose(preserveRenderer = false) {
             cancelAnimationFrame(raf);
             clearTimeout(timer);
             clearTimeout(refit);
             resize.disconnect();
             controls.dispose();
-            environment.dispose();
-            pmrem.dispose();
-            renderer.dispose();
+            ink.remove();
+            const assets = new Set();
+            scene.traverse((node) => {
+                if (node.geometry) assets.add(node.geometry);
+                for (const material of [node.material].flat().filter(Boolean)) {
+                    assets.add(material);
+                    for (const value of Object.values(material)) if (value?.isTexture) assets.add(value);
+                }
+            });
+            for (const asset of assets) asset.dispose();
+            if (!preserveRenderer) {
+                environment.dispose();
+                pmrem.dispose();
+                renderer.dispose();
+            }
         },
     };
 }

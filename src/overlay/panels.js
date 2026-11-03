@@ -93,9 +93,10 @@ export class Panels {
         if (panel.sent) panel.frame?.contentWindow?.postMessage({ type: "inset", px }, "*");
     }
 
-    async show({ id, kind, title, content, rect = {}, frameless = false, image = null }) {
+    async show({ id, kind, title, content, rect = {}, frameless = false, image = null, building = false }) {
         const isNew = !this.#panels.has(id);
         const panel = this.#open(id, kind, title, frameless);
+        if (building) panel.el.querySelector(".panel-kind").textContent = "Building";
         panel.step = null;
         panel.added = [];
         panel.autoSize = !frameless && !Number.isFinite(rect.width) && !Number.isFinite(rect.height) && isNew;
@@ -321,8 +322,9 @@ export class Panels {
         const margin = 16;
         const [defaultWidth, defaultHeight] = DEFAULT_SIZE[kind];
         const min = MIN_SIZE[kind] ?? [240, 160];
-        const width = clamp(rect.width ?? (isNew ? defaultWidth : el.offsetWidth), min[0], innerWidth - margin * 2);
-        const height = clamp(rect.height ?? (isNew ? defaultHeight : el.offsetHeight), min[1], innerHeight - margin * 2);
+        const keepSize = !isNew && kind === "scene" && panel.frameKind === kind && panel.frame;
+        const width = clamp(rect.width ?? (isNew ? defaultWidth : el.offsetWidth), keepSize && !Number.isFinite(rect.width) ? 1 : min[0], innerWidth - margin * 2);
+        const height = clamp(rect.height ?? (isNew ? defaultHeight : el.offsetHeight), keepSize && !Number.isFinite(rect.height) ? 1 : min[1], innerHeight - margin * 2);
         const placeSelf = !Number.isFinite(rect.x) || !Number.isFinite(rect.y);
         if (isNew) panel.autoPlaced = placeSelf;
         const target = isNew && placeSelf && kind === "scene" && !Number.isFinite(rect.width) && !Number.isFinite(rect.height) ? this.target() : null;
@@ -376,15 +378,20 @@ export class Panels {
     }
 
     #renderInFrame(panel, kind, content, image = null) {
-        this.#dropFrame(panel);
-        const frame = document.createElement("iframe");
-        frame.setAttribute("sandbox", "allow-scripts");
-        frame.title = panel.el.querySelector(".panel-title").textContent;
-        frame.src = SANDBOX_URL;
-        panel.frame = frame;
-        panel.sent = false;
-        panel.el.querySelector(".panel-body").replaceChildren(frame);
-        this.#frames.set(frame.contentWindow, panel);
+        const reuse = kind === "scene" && panel.frameKind === kind && panel.sent && !panel.pending;
+        if (!reuse) {
+            this.#dropFrame(panel);
+            const frame = document.createElement("iframe");
+            frame.setAttribute("sandbox", "allow-scripts");
+            frame.src = SANDBOX_URL;
+            panel.frame = frame;
+            panel.frameKind = kind;
+            panel.sent = false;
+            panel.el.querySelector(".panel-body").replaceChildren(frame);
+            this.#frames.set(frame.contentWindow, panel);
+        }
+        panel.frame.title = panel.el.querySelector(".panel-title").textContent;
+        const renderId = (panel.renderId = (panel.renderId ?? 0) + 1);
         return new Promise((resolve) => {
             const finish = (result) => {
                 clearTimeout(timer);
@@ -392,7 +399,11 @@ export class Panels {
                 resolve(result);
             };
             const timer = setTimeout(() => finish({ ok: true, note: "still rendering" }), 15_000);
-            panel.pending = { kind, content, image, finish };
+            panel.pending = { kind, content, image, renderId, finish };
+            if (reuse) {
+                panel.frame.contentWindow.postMessage({ kind, content, image, renderId, inPlace: panel.el.classList.contains("frameless") }, "*");
+                if (Number.isFinite(panel.inset)) panel.frame.contentWindow.postMessage({ type: "inset", px: panel.inset }, "*");
+            }
         });
     }
 
@@ -408,14 +419,15 @@ export class Panels {
         const data = event.data;
         if (!panel || !data || typeof data !== "object") return;
         if (data.type === "ready" && panel.pending) {
-            event.source.postMessage({ kind: panel.pending.kind, content: panel.pending.content, image: panel.pending.image, inPlace: panel.el.classList.contains("frameless") }, "*");
+            event.source.postMessage({ kind: panel.pending.kind, content: panel.pending.content, image: panel.pending.image, renderId: panel.pending.renderId, inPlace: panel.el.classList.contains("frameless") }, "*");
             if (panel.added?.length) event.source.postMessage({ type: "steps", steps: panel.added }, "*");
             if (Number.isInteger(panel.step)) event.source.postMessage({ type: "step", index: panel.step }, "*");
             if (Number.isFinite(panel.inset)) event.source.postMessage({ type: "inset", px: panel.inset }, "*");
             panel.sent = true;
         } else if (data.type === "rendered") {
-            panel.pending?.finish({ ok: true });
+            if (data.renderId === undefined || data.renderId === panel.pending?.renderId) panel.pending?.finish({ ok: true });
         } else if (data.type === "error") {
+            if (data.renderId !== undefined && data.renderId !== panel.pending?.renderId) return;
             const message = String(data.message ?? "Unknown error").slice(0, 2000);
             this.#showError(panel, message);
             panel.pending?.finish({ ok: false, error: message });
