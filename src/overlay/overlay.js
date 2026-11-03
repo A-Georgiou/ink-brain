@@ -297,7 +297,7 @@ function createBubble() {
     function place() {
         // Once an explanation has ended, its subtitles linger a moment and the answer keeps clear of them.
         const caption = document.querySelector("#captions:not(.hidden)");
-        const drawn = [...annotations.rects(), ...panels.rects(), checkCard.rect(), dockRect(), ...(caption && !el.classList.contains("minimized") ? [caption.getBoundingClientRect()] : [])].filter(Boolean);
+        const drawn = [...annotations.rects(), ...panels.rects(), checkCard.rect(), dockRect(), ...(caption && (!el.classList.contains("minimized") || caption.classList.contains("docked")) ? [caption.getBoundingClientRect()] : [])].filter(Boolean);
         const view = { width: innerWidth, height: innerHeight };
         const quiet = inkUnder();
         const spot = () => bubbleSpot({ w: el.offsetWidth, h: el.offsetHeight, view, bottomInset: state.pen ? 150 : 110, anchor, drawn, current: slot, ink: quiet });
@@ -465,7 +465,8 @@ const captions = (() => {
     });
     let hideTimer = 0;
     let scene = null;
-    // Subtitles sit along a scene's bottom edge like a video, otherwise above the minimized bubble.
+    let is3D = false;
+    // Subtitles sit under a scene when the screen has room, else along its bottom edge like a video, otherwise above the minimized bubble.
     const dodge = () => {
         Object.assign(el.style, { left: "", bottom: "", maxWidth: "" });
         const stage = scene && panels.rectOf(scene);
@@ -473,8 +474,12 @@ const captions = (() => {
         // A narrow stage gets smaller, wider subtitles, so they take fewer lines off the model.
         el.classList.toggle("narrow", Boolean(stage) && stage.width < 600);
         if (stage) {
-            Object.assign(el.style, { left: `${Math.round(stage.left + stage.width / 2)}px`, bottom: `${Math.round(innerHeight - stage.bottom + 14)}px`, maxWidth: `${Math.round(stage.width - (stage.width < 600 ? 28 : 48))}px` });
-            panels.inset(scene, el.classList.contains("hidden") ? 0 : el.offsetHeight + 22);
+            Object.assign(el.style, { left: `${Math.round(stage.left + stage.width / 2)}px`, maxWidth: `${Math.round(stage.width - (stage.width < 600 ? 28 : 48))}px` });
+            // A 3D model needs every pixel of its stage, so its subtitles sit under it when the screen has room.
+            const under = is3D && innerHeight - stage.bottom >= el.offsetHeight + 26;
+            el.style.bottom = `${Math.round(innerHeight - stage.bottom - (under ? el.offsetHeight + 12 : -14))}px`;
+            panels.inset(scene, under || el.classList.contains("hidden") ? 0 : el.offsetHeight + 22);
+            bubble.reflow();
             return;
         }
         const pill = bubble.rect();
@@ -495,6 +500,7 @@ const captions = (() => {
         if (event.type === "start") {
             checkCard.hide();
             scene = event.scene ?? null;
+            is3D = event.stageKind === "scene";
             steps.replaceChildren(...Array.from({ length: event.total }, () => document.createElement("i")));
             line.textContent = event.title || "";
             pause.textContent = "Pause";

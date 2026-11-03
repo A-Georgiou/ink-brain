@@ -391,7 +391,7 @@ export class ExplainPlayer {
             run.notes.push(...playable.dropped);
             if (scene && board) run.notes.push("the board was left out because a scene was given; use one stage per explanation");
         }
-        this.caption({ type: "start", title: String(title ?? "").slice(0, 120), total: run.steps.length, scene: run.stage?.id ?? null, controls: true });
+        this.caption({ type: "start", title: String(title ?? "").slice(0, 120), total: run.steps.length, scene: run.stage?.id ?? null, stageKind: run.stage?.kind ?? null, controls: true });
         run.goLive();
         let completed = 0;
         let again = false;
