@@ -300,7 +300,7 @@ function createBubble() {
             if (!quiet || quiet(wide.box) < (wide.box.w * wide.box.h) / 1280) return wide;
             el.classList.add("slim");
             const slim = spot();
-            if (slim.box.h <= 280 && slim.cost < wide.cost && quiet(slim.box) * (slimmed ? 2 : 4) <= quiet(wide.box)) return slim;
+            if (slim.box.h <= 280 && slim.cost < wide.cost && quiet(slim.box) <= (slimmed ? 6 : 2)) return slim;
             el.classList.remove("slim");
             return wide;
         };
