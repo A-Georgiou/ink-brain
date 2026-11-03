@@ -397,12 +397,16 @@ async function pool(items, size, task) {
     return results;
 }
 
+// Keep Chromium caches inside this eval's workspace instead of sharing the running app's profile.
+const PROFILE = path.join(WORK, "electron");
+fs.mkdirSync(PROFILE, { recursive: true });
+app.setPath("userData", PROFILE);
+app.setPath("sessionData", PROFILE);
 protocol.registerSchemesAsPrivileged([APP_SCHEME]);
 app.on("window-all-closed", () => {});
 app.on("child-process-gone", (_event, details) => details.type === "GPU" && console.warn(`The GPU process went away (${details.reason}); 3D panels may be blank`));
 app.whenReady().then(async () => {
     registerAppProtocol();
-    fs.mkdirSync(WORK, { recursive: true });
     fs.mkdirSync(OUT, { recursive: true });
     const reader = new Reader({ BrowserWindow, session, userAgent: app.userAgentFallback.replace(/ (Electron|ink-brain)\/\S+/g, "") });
     const { CopilotClient } = await import("@github/copilot-sdk");
