@@ -1,4 +1,4 @@
-// Plays scenarios through Ink Brain's own brain, tools and overlay, and a judge scores what the user saw (npm run eval -- [--only id,id] [--category maths,3d] [--repeat 2]).
+// Plays scenarios through Ink Brain's own brain, tools and overlay, and a judge scores what the user saw (npm run eval -- [--only id,id] [--category maths,3d] [--repeat 2] [--replay label]).
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -35,6 +35,8 @@ const OWN_TOOLS = new Set(STANDALONE_TOOLS.map((tool) => tool.name));
 const VISUAL_TOOLS = new Set(["live_explain", "live_panel", "live_annotate", "live_image", "live_cutout"]);
 const VISUAL_CALLS = new Set(["annotate", "panel", "cutout", "image"]);
 const STREAM = !argv.includes("--no-stream");
+// Replays the tool calls recorded under that label instead of asking the model, to compare rendering alone.
+const REPLAY = option("replay", null);
 const TURN_TIMEOUT_MS = 8 * 60_000;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -51,7 +53,7 @@ function narrator() {
 const overlayState = (thinking) => ({ pen: false, listening: false, thinking, speaking: false, controlling: false, stayLive: false, target: "auto", resolvedTarget: "Ink Brain" });
 
 // Plays one turn on the stage and records what the user would see and hear.
-async function play(scenario, dir, { reader, client }) {
+async function play(scenario, dir, { reader, client, replay = null }) {
     const meta = JSON.parse(fs.readFileSync(path.join(FIXTURES, `${scenario.id}.json`), "utf8"));
     const jpeg = fs.readFileSync(path.join(FIXTURES, `${scenario.id}.jpg`));
     const screen = `data:image/jpeg;base64,${jpeg.toString("base64")}`;
@@ -198,16 +200,32 @@ async function play(scenario, dir, { reader, client }) {
         const end = marks.at(-1)?.points.at(-1);
         const prompt = buildTurnPrompt({ text: scenario.ask, marks, geometry: GEOMETRY, cursor: end && { x: end[0], y: end[1] }, front: { app: "Google Chrome", title: meta.title }, crop: zoom, turnId: "1" });
         const attachments = [shot.full, shot.crop].filter(Boolean).map((data, i) => ({ type: "blob", data, mimeType: "image/jpeg", displayName: i ? "zoom.jpg" : "screen.jpg" }));
-        await brain.ensure();
-        const finished = new Promise((resolve) => {
-            brain.once("idle", () => resolve(null));
-            brain.once("error", resolve);
-        });
-        start = Date.now();
-        stage.send("live:state", overlayState(true));
-        stage.send("live:turn", { type: "start", id: 1, question: scenario.ask, target: "Ink Brain", anchor: boundsOfMarks(marks) });
-        await brain.send({ prompt, attachments });
-        const error = await Promise.race([finished, sleep(TURN_TIMEOUT_MS).then(() => new Error("the turn timed out"))]);
+        const begin = () => {
+            start = Date.now();
+            stage.send("live:state", overlayState(true));
+            stage.send("live:turn", { type: "start", id: 1, question: scenario.ask, target: "Ink Brain", anchor: boundsOfMarks(marks) });
+        };
+        let error = null;
+        if (replay) {
+            // Plays a recorded turn's own tool calls again at their times, so only the overlay's rendering differs.
+            begin();
+            for (const tool of replay.tools) {
+                await sleep(tool.at - elapsed());
+                if (record.firstWords == null && replay.firstWords != null && replay.firstWords <= tool.at) append(replay.text);
+                if (OWN_TOOLS.has(tool.name) && tool.name !== "live_read") await runTool(tool.name, tool.args, `replay-${record.tools.length}`);
+                else record.tools.push(tool);
+            }
+            if (record.firstWords == null && replay.text) append(replay.text);
+        } else {
+            await brain.ensure();
+            const finished = new Promise((resolve) => {
+                brain.once("idle", () => resolve(null));
+                brain.once("error", resolve);
+            });
+            begin();
+            await brain.send({ prompt, attachments });
+            error = await Promise.race([finished, sleep(TURN_TIMEOUT_MS).then(() => new Error("the turn timed out"))]);
+        }
         record.total = elapsed();
         record.error = error?.message ?? null;
         if (error) await brain.abort();
@@ -288,11 +306,16 @@ async function evaluate(scenario, attempt, { reader, client, judge }) {
         record = JSON.parse(fs.readFileSync(path.join(dir, "record.json"), "utf8"));
     } else {
         // A 3D panel that lost its WebGL context under the eval's load shows nothing, so that run is played again.
+        const replayFile = REPLAY && path.join(here, "results", REPLAY, id, "record.json");
+        const replay = replayFile && fs.existsSync(replayFile) ? JSON.parse(fs.readFileSync(replayFile, "utf8")) : null;
         for (let tries = 0; tries < 2 && (!record || record.glLost); tries++) {
             if (record) console.warn(`${id}: a 3D panel lost its WebGL context; playing it again`);
             fs.rmSync(dir, { recursive: true, force: true });
             fs.mkdirSync(dir, { recursive: true });
-            record = await play(scenario, dir, { reader, client }).catch((error) => ({ text: "", captions: [], tools: [], frames: [], error: `eval failed: ${error.message}` }));
+            record =
+                REPLAY && !replay
+                    ? { text: "", captions: [], tools: [], frames: [], error: `no recorded run of ${id} in ${REPLAY}` }
+                    : await play(scenario, dir, { reader, client, replay }).catch((error) => ({ text: "", captions: [], tools: [], frames: [], error: `eval failed: ${error.message}` }));
         }
         fs.writeFileSync(path.join(dir, "record.json"), JSON.stringify(record, null, 1));
     }
