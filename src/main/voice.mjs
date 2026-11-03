@@ -56,10 +56,12 @@ export class Voice extends EventEmitter {
         this.#worker?.kill();
     }
 
-    speak(text, utterance) {
-        if (!this.#ready) return this.#system(text, utterance);
+    // pace is a factor on the configured speed (1 keeps it); slower narration passes a factor below 1.
+    speak(text, utterance, pace = 1) {
+        const factor = Number.isFinite(pace) && pace > 0 ? pace : 1;
+        if (!this.#ready) return this.#system(text, utterance, factor);
         this.#pending.set(utterance, text);
-        this.#worker.postMessage({ type: "speak", id: utterance, text, voice: this.config.voice.neuralVoice, speed: this.config.voice.speed ?? 1 });
+        this.#worker.postMessage({ type: "speak", id: utterance, text, voice: this.config.voice.neuralVoice, speed: (this.config.voice.speed ?? 1) * factor });
     }
 
     stop() {
@@ -70,9 +72,10 @@ export class Voice extends EventEmitter {
         this.helper.request("speak.stop").catch(() => {});
     }
 
-    #system(text, utterance) {
+    #system(text, utterance, speed = 1) {
         const { voiceId, rate } = this.config.voice;
-        this.helper.request("speak", { text, utterance, voice: voiceId ?? undefined, rate: rate ?? undefined, volume: this.volume }).catch(() => this.#dropped(utterance));
+        const spoken = Number.isFinite(rate) ? Math.round(rate * speed) : undefined;
+        this.helper.request("speak", { text, utterance, voice: voiceId ?? undefined, rate: spoken ?? rate ?? undefined, volume: this.volume }).catch(() => this.#dropped(utterance));
     }
 
     // Ends an utterance the helper could not play.

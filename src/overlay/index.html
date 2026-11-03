@@ -112,8 +112,17 @@
         <p class="check-note muted small">Pick one, or say your answer.</p>
     </section>
 
-    <div id="captions" class="hidden" aria-live="polite">
-        <div class="caption-steps"></div>
+    <div id="captions" class="hidden interactive" aria-live="polite">
+        <div class="caption-bar">
+            <div class="caption-steps"></div>
+            <div class="caption-controls interactive">
+                <button type="button" data-explain="back" aria-label="Previous step">Back</button>
+                <button type="button" data-explain="pause" aria-label="Pause">Pause</button>
+                <button type="button" data-explain="replay" aria-label="Replay this step">Replay</button>
+                <button type="button" data-explain="next" aria-label="Next step">Next</button>
+                <button type="button" data-explain="slower" aria-label="Slower">Slower</button>
+            </div>
+        </div>
         <p class="caption-text"></p>
     </div>
 

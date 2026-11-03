@@ -929,7 +929,7 @@ body:not(.speaking):not(.thinking) .bubble-stop {
     background: rgba(1, 4, 9, 0.82);
     box-shadow: 0 12px 36px rgba(1, 4, 9, 0.5);
     text-align: center;
-    pointer-events: none;
+    pointer-events: auto;
     z-index: 930;
     animation: rise 0.25s ease both;
 }
@@ -977,6 +977,40 @@ body:not(.speaking):not(.thinking) .bubble-stop {
 #captions.docked.narrow .caption-text {
     font-size: 14px;
     line-height: 1.35;
+}
+
+.caption-bar {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    margin-bottom: 6px;
+}
+
+.caption-controls {
+    display: none;
+    gap: 4px;
+    pointer-events: auto;
+}
+
+#captions:hover .caption-controls {
+    display: flex;
+}
+
+.caption-controls button {
+    border: 0;
+    background: rgba(240, 246, 252, 0.12);
+    color: #fff;
+    border-radius: 999px;
+    padding: 2px 8px;
+    font: inherit;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.caption-controls button:hover {
+    background: rgba(240, 246, 252, 0.24);
 }
 
 #check-card {

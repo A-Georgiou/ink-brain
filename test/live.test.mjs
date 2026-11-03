@@ -7,9 +7,9 @@ import { test } from "node:test";
 import { ToolCalls } from "../src/main/brain.mjs";
 import { Controller } from "../src/main/control.mjs";
 import { ExplainPlayer } from "../src/main/explain.mjs";
+import { createCheckWaiter, describeAnswer, normalizeCheck, validateCheck } from "../src/main/tutor.mjs";
 import { clearStaleGrants } from "../src/main/helper.mjs";
 import { readImageFile } from "../src/main/images.mjs";
-import { createCheckWaiter, describeAnswer, normalizeCheck, validateCheck } from "../src/main/tutor.mjs";
 import { Voice } from "../src/main/voice.mjs";
 
 test("images can only be read from Copilot's own image folders", () => {
@@ -28,7 +28,7 @@ test("images can only be read from Copilot's own image folders", () => {
     assert.throws(() => readImageFile(path.join(allowed, "s1", "events.jsonl"), [allowed]), /Only PNG, JPEG and WebP/);
 });
 
-function explainer() {
+function explainer(caption = () => {}) {
     const log = [];
     const lines = [];
     const surface = {
@@ -51,7 +51,7 @@ function explainer() {
         lines.push(line);
         return line;
     };
-    const player = new ExplainPlayer({ surface, speak, caption: () => {} });
+    const player = new ExplainPlayer({ surface, speak, caption, hush: () => log.push("hush") });
     return { player, log, lines };
 }
 
@@ -142,6 +142,58 @@ test("a streamed explanation whose call never finishes plays the steps it has on
     await tick();
     await tick();
     assert.equal(log.at(-1), "expire explain-1");
+});
+
+test("an explanation can be paused, and replay speaks the step again", async () => {
+    const events = [];
+    const { player, lines } = explainer((event) => events.push(event));
+    const played = player.play({ steps: [{ say: "First" }, { say: "Second" }] });
+    await tick();
+    assert.equal(events.find((event) => event.type === "start").controls, true);
+    lines[0].start();
+    await tick();
+    player.control("pause");
+    lines[0].end();
+    await tick();
+    let done = false;
+    played.then(() => (done = true));
+    await tick();
+    assert.equal(done, false);
+    player.control("replay");
+    await tick();
+    assert.equal(lines.length, 3);
+    lines[2].start();
+    await tick();
+    lines[2].end();
+    await tick();
+    lines[1].start();
+    await tick();
+    lines[1].end();
+    assert.match((await played).text, /Narrated all 2 steps/);
+});
+
+test("resume repeats the interrupted line and next hushes before moving on", async () => {
+    const { player, lines, log } = explainer();
+    const played = player.play({ steps: [{ say: "First" }, { say: "Second" }] });
+    await tick();
+    lines[0].start();
+    await tick();
+    player.control("pause");
+    await tick();
+    player.control("resume");
+    await tick();
+    assert.equal(lines.length, 3);
+    assert.ok(log.includes("hush"));
+    lines[2].start();
+    await tick();
+    lines[2].end();
+    await tick();
+    player.control("next");
+    assert.ok(log.filter((line) => line === "hush").length >= 2);
+    lines[1].start();
+    await tick();
+    lines[1].end();
+    assert.match((await played).text, /Narrated all 2 steps/);
 });
 
 test("a check names the misconception behind a spoken wrong answer", async () => {
@@ -245,6 +297,15 @@ test("the neural voice stays busy until every queued sentence has played", () =>
     assert.deepEqual(ends.at(-1), { utterance: "u1", cancelled: false, idle: false });
     worker.emit("message", { type: "error", id: "u2", message: "boom" });
     assert.deepEqual(requests.at(-1), ["speak", "u2"]);
+});
+
+test("spoken speed is the configured speed times the pace factor", () => {
+    const { v, worker } = voice();
+    v.config.voice.speed = 1.25;
+    v.speak("One.", "u1");
+    v.speak("Slow.", "u2", 0.5);
+    assert.equal(worker.sent.find((message) => message.id === "u1").speed, 1.25);
+    assert.equal(worker.sent.find((message) => message.id === "u2").speed, 0.625);
 });
 
 test("stopping the voice cancels sentences that are still being generated", () => {

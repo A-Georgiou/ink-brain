@@ -1180,6 +1180,10 @@ export async function renderScene(spec, { root, makeLabel, inPlace = false }) {
     resize.observe(root);
     return {
         step,
+        goto(index) {
+            reset();
+            if (Number.isInteger(index) && index >= 0) step(index);
+        },
         addSteps: (more) => steps.push(...more),
         // The subtitles' real height, so the model is framed above them and never under them.
         setInset(px) {

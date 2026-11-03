@@ -413,6 +413,12 @@ const captions = (() => {
     const el = $("#captions");
     const steps = el.querySelector(".caption-steps");
     const line = el.querySelector(".caption-text");
+    const pause = el.querySelector('[data-explain="pause"]');
+    const slower = el.querySelector('[data-explain="slower"]');
+    el.querySelector(".caption-controls").addEventListener("click", (event) => {
+        const action = event.target.closest("button")?.dataset.explain;
+        if (action) api.command("explainControl", action);
+    });
     let hideTimer = 0;
     let scene = null;
     // Subtitles sit along a scene's bottom edge like a video, otherwise above the minimized bubble.
@@ -435,11 +441,20 @@ const captions = (() => {
     };
     return (event) => {
         clearTimeout(hideTimer);
+        if (event.type === "control") {
+            pause.textContent = event.paused ? "Play" : "Pause";
+            pause.dataset.explain = event.paused ? "resume" : "pause";
+            slower.textContent = event.pace > 1 ? `${event.pace}x` : "Slower";
+            slower.dataset.explain = event.pace >= 2.2 ? "faster" : "slower";
+            return;
+        }
         if (event.type === "start") {
             checkCard.hide();
             scene = event.scene ?? null;
             steps.replaceChildren(...Array.from({ length: event.total }, () => document.createElement("i")));
             line.textContent = event.title || "";
+            pause.textContent = "Pause";
+            pause.dataset.explain = "pause";
             el.classList.remove("hidden");
             bubble.minimize(true);
             dodge();
@@ -636,6 +651,7 @@ api.on("live:call", async ({ id, method, params }) => {
             result = await panels.showImage(params);
             bubble.reflow();
         } else if (method === "scene-step") panels.step(params.id, params.index);
+        else if (method === "scene-goto") panels.goto(params.id, params.index);
         else if (method === "scene-steps") panels.addSteps(params.id, params.steps);
         else if (method === "check") checkCard.show(params);
         else if (method === "check-pick") checkCard.pick(params);

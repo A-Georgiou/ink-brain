@@ -8,6 +8,76 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms).unref?.()
 const MAX_STEPS = 12;
 const spoken = (step) => (typeof step?.say === "string" ? step.say.trim().slice(0, 600) : "");
 
+// Learner controls for one explanation: pause, replay, step and slower. The default path never waits on this.
+export class Playback {
+    paused = false;
+    pace = 1;
+    once = false;
+    #command = null;
+    #fired = false;
+    #waiting = null;
+    #resolve = null;
+    #holders = [];
+
+    changed() {
+        if (this.#fired) {
+            this.#fired = false;
+            return Promise.resolve();
+        }
+        if (!this.#waiting) this.#waiting = new Promise((resolve) => (this.#resolve = resolve));
+        return this.#waiting;
+    }
+
+    hold() {
+        if (!this.paused) return Promise.resolve();
+        return new Promise((resolve) => this.#holders.push(resolve));
+    }
+
+    take() {
+        const command = this.#command;
+        this.#command = null;
+        return command;
+    }
+
+    #fire() {
+        if (this.#resolve) {
+            this.#resolve();
+            this.#waiting = null;
+            this.#resolve = null;
+        } else this.#fired = true;
+    }
+
+    #release() {
+        const holders = this.#holders;
+        this.#holders = [];
+        for (const resolve of holders) resolve();
+    }
+
+    control(action) {
+        if (action === "pause") {
+            this.paused = true;
+            this.#fire();
+        } else if (action === "resume") {
+            this.paused = false;
+            this.#release();
+        } else if (action === "slower") this.pace = Math.min(2.2, Math.round((this.pace + 0.4) * 10) / 10);
+        else if (action === "faster") this.pace = Math.max(0.6, Math.round((this.pace - 0.4) * 10) / 10);
+        else if (action === "replay" || action === "back") {
+            this.#command = action;
+            this.paused = false;
+            this.#fire();
+            this.#release();
+        } else if (action === "next") {
+            this.once = this.paused || this.once;
+            this.#command = "next";
+            this.paused = false;
+            this.#fire();
+            this.#release();
+        }
+        return { paused: this.paused, pace: this.pace };
+    }
+}
+
 // Rough speaking time, used when the voice is off and as a safety timeout.
 export const readingTime = (text) => Math.min(15_000, Math.max(1_200, String(text).trim().split(/\s+/).length * 340));
 
@@ -43,6 +113,7 @@ class Run {
         this.id = id;
         this.speak = speak;
         this.halted = new Promise((resolve) => (this.wake = resolve));
+        this.takes = 0;
     }
 
     add(step) {
@@ -80,13 +151,55 @@ export class ExplainPlayer {
     #count = 0;
     #streams = new Map();
     #finished = new Set();
+    #playback = new Playback();
+    #cut = false;
 
     // speak(text, utterance) queues narration and returns { started, ended } promises, or null with no voice.
-    constructor({ surface, speak, caption, keepSeconds = 90 }) {
+    constructor({ surface, speak, caption, keepSeconds = 90, hush = null }) {
         this.surface = surface;
         this.speak = speak;
         this.caption = caption;
         this.keepSeconds = keepSeconds;
+        this.hush = hush;
+    }
+
+    // Pause, slower, or a replay/back requested during the step. Null on the untouched path, so playback adds no wait.
+    #afterStep(run) {
+        const playback = this.#playback;
+        const cmd = playback.take();
+        if (cmd === "replay" || cmd === "back") return cmd;
+        if (playback.once) {
+            playback.once = false;
+            playback.paused = true;
+        }
+        if (!playback.paused && playback.pace <= 1) return null;
+        return this.#dwell(run);
+    }
+
+    async #dwell(run) {
+        const playback = this.#playback;
+        if (playback.paused) {
+            this.caption({ type: "control", paused: true, pace: playback.pace });
+            await Promise.race([playback.hold(), run.halted]);
+            if (run.stopped) return "stop";
+            const cmd = playback.take();
+            if (cmd === "replay" || cmd === "back") return cmd;
+        }
+        const extra = Math.round(readingTime(spoken(run.steps[run.index] ?? {})) * (playback.pace - 1));
+        if (extra > 40) await Promise.race([sleep(extra), run.halted, playback.changed()]);
+        if (run.stopped) return "stop";
+        const late = playback.take();
+        return late === "replay" || late === "back" ? late : null;
+    }
+
+    control(action) {
+        if (!this.#run || this.#run.stopped) return { ok: false };
+        if (action === "resume" && this.#cut) action = "replay";
+        this.#cut = action === "pause";
+        if (action === "pause" || action === "next" || action === "replay" || action === "back") this.hush?.();
+        const status = this.#playback.control(action);
+        this.caption({ type: "control", ...status });
+        return { ok: true, ...status };
     }
 
     cancel(reason = "interrupted") {
@@ -147,6 +260,8 @@ export class ExplainPlayer {
 
     #begin(head, steps) {
         this.cancel("replaced");
+        this.#cut = false;
+        this.#playback = new Playback();
         const run = new Run(++this.#count, this.speak);
         this.#run = run;
         for (const step of steps) run.add(step);
@@ -188,22 +303,26 @@ export class ExplainPlayer {
             run.notes.push(...playable.dropped);
             if (scene && board) run.notes.push("the board was left out because a scene was given; use one stage per explanation");
         }
-        this.caption({ type: "start", title: String(title ?? "").slice(0, 120), total: run.steps.length, scene: run.stage?.id ?? null });
+        this.caption({ type: "start", title: String(title ?? "").slice(0, 120), total: run.steps.length, scene: run.stage?.id ?? null, controls: true });
         run.goLive();
         let completed = 0;
+        let again = false;
         try {
             for (let index = 0; index < MAX_STEPS; index++) {
                 const step = await run.next(index);
                 if (!step) break;
+                run.index = index;
                 const text = spoken(step);
                 if (!text) {
                     run.notes.push(`step ${index + 1} had nothing to say, so it was skipped`);
                     continue;
                 }
+                if (again) run.lines[index] = this.speak(text, `explain-${run.id}-${index}-r${++run.takes}`, 1 / this.#playback.pace);
                 if (run.stage) await this.#extend(run);
                 const line = run.lines[index];
-                if (line) await Promise.race([line.started, sleep(index === 0 ? 1_500 : 8_000), run.halted]);
+                if (line) await Promise.race([line.started, sleep(index === 0 ? 1_500 : 8_000), run.halted, this.#playback.changed()]);
                 if (run.stopped) break;
+                if (again && Array.isArray(step.draw) && step.draw.length) await this.surface.clearGroup(group);
                 if (step.clear) await this.surface.clearGroup(group);
                 const drawing = Array.isArray(step.draw) && step.draw.length ? await this.surface.drawShapes(step.draw, { clear: false, ttl: 0, group }) : { duration: 0, problems: [] };
                 if (drawing.problems.length) run.notes.push(`step ${index + 1}: ${drawing.problems.join("; ")}`);
@@ -211,11 +330,22 @@ export class ExplainPlayer {
                     const shown = await this.surface.execute("live_panel", step.panel);
                     if (shown.failed) run.notes.push(`step ${index + 1} panel: ${shown.text}`);
                 }
-                if (run.stage) await this.surface.sceneStep(run.stage.id, index);
+                if (run.stage) await (again ? this.surface.sceneGoto?.(run.stage.id, index) : this.surface.sceneStep(run.stage.id, index));
+                again = false;
                 this.caption({ type: "step", index, total: run.steps.length, text });
                 const said = line ? Promise.race([line.ended, sleep(readingTime(text) * 3 + 15_000)]) : Promise.all([sleep(readingTime(text)), sleep(drawing.duration)]);
-                await Promise.race([said, run.halted]);
+                await Promise.race([said, run.halted, this.#playback.changed()]);
                 if (run.stopped) break;
+                const steer = this.#afterStep(run);
+                const cmd = steer && typeof steer.then === "function" ? await steer : steer;
+                if (cmd === "stop" || run.stopped) break;
+                if (cmd === "replay" || cmd === "back") {
+                    again = true;
+                    this.hush?.();
+                    index += cmd === "replay" ? -1 : -2;
+                    if (index < -1) index = -1;
+                    continue;
+                }
                 completed = index + 1;
                 if (!line) await Promise.race([sleep(300), run.halted]);
             }

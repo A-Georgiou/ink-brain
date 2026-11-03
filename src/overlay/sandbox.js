@@ -28,6 +28,12 @@ addEventListener("message", async (event) => {
         else pendingStep = Math.max(pendingStep, index);
         return;
     }
+    if (event.data.type === "goto") {
+        const index = Number(event.data.index);
+        if (stage?.goto) stage.goto(index);
+        else pendingStep = index;
+        return;
+    }
     if (event.data.type === "inset") {
         if (stage) stage.setInset?.(event.data.px);
         else pendingInset = event.data.px;

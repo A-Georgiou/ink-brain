@@ -300,6 +300,8 @@ function runCommand(name, value) {
             return controller?.stop("the user stopped it");
         case "checkAnswer":
             return checks?.answer(value);
+        case "explainControl":
+            return explainer?.control(String(value ?? ""));
         case "restartHelper":
             return restartHelper();
         case "clearAll":
@@ -421,7 +423,7 @@ function speak(chunks, base) {
 }
 
 // Queues a line of narration; returns { started, ended } promises, or null with the voice off.
-function narrate(text, utterance) {
+function narrate(text, utterance, pace = 1) {
     if (!state.voiceOut) return null;
     let started;
     let ended;
@@ -438,7 +440,7 @@ function narrate(text, utterance) {
     const timer = setTimeout(cleanup, readingTime(text) * 3 + 60_000);
     voice.on("start", onStart);
     voice.on("end", onEnd);
-    voice.speak(text, utterance);
+    voice.speak(text, utterance, pace);
     return line;
 }
 
@@ -1383,6 +1385,7 @@ function createTools() {
         speak: narrate,
         caption: (event) => send("live:explain", event),
         keepSeconds: config.explanationTtlSeconds,
+        hush: () => voice.stop(),
     });
     controller = new Controller({
         helper,

@@ -72,6 +72,13 @@ export class Panels {
         panel.frame?.contentWindow?.postMessage({ type: "step", index }, "*");
     }
 
+    goto(id, index) {
+        const panel = this.#panels.get(id);
+        if (!panel) return;
+        panel.step = index;
+        panel.frame?.contentWindow?.postMessage({ type: "goto", index }, "*");
+    }
+
     // Tells a scene how much of its bottom the subtitles cover, so it frames the model above them.
     inset(id, px) {
         const panel = this.#panels.get(id);

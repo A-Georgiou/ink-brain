@@ -162,6 +162,11 @@ export class Surface {
         return this.overlayCall("scene-step", { id, index }).catch(() => {});
     }
 
+    // Rebuilds the stage up to a step, so replay and step-back show that step again.
+    sceneGoto(id, index) {
+        return this.overlayCall("scene-goto", { id, index }).catch(() => {});
+    }
+
     async #check(args) {
         const problem = validateCheck(args);
         if (problem) return { text: `${problem}.`, failed: true };

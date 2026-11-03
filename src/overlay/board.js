@@ -969,6 +969,12 @@ export async function renderBoard(spec, { root }) {
     resize.observe(root);
     return {
         step: (index) => board.step(index),
+        // Replay and step-back rebuild to that step, because a board only plays forward.
+        goto(index) {
+            board.dispose();
+            board = build(spec, world, katex);
+            if (Number.isInteger(index) && index >= 0) board.step(index);
+        },
         addSteps: (more) => board.addSteps(more),
         dispose() {
             cancelAnimationFrame(raf);
