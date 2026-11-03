@@ -466,10 +466,7 @@ const captions = (() => {
             dodge();
         } else if (event.type === "end") {
             bubble.minimize(false);
-            hideTimer = setTimeout(() => {
-                el.classList.add("hidden");
-                if (scene) panels.inset(scene, 0);
-            }, event.stopped ? 400 : 2500);
+            hideTimer = setTimeout(() => el.classList.add("hidden"), event.stopped ? 400 : 2500);
         }
     };
 })();

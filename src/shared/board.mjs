@@ -218,7 +218,7 @@ export function clearSpot(b, taken, width, height) {
     const onBoard = (r) => fitsIn(r.x, r.w, width) && fitsIn(r.y, r.h, height);
     let frontier = [[into(b.x, b.w, width), into(b.y, b.h, height)]];
     const seen = new Set();
-    for (let depth = 0; depth < 4 && frontier.length; depth++) {
+    for (let depth = 0; depth < 6 && frontier.length; depth++) {
         const next = [];
         for (const d of frontier) {
             const r = at(d);

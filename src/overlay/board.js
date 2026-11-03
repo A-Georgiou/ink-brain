@@ -289,9 +289,12 @@ function build(spec, world, katex) {
             item.tip.setAttribute("d", `M${b.join(",")}L${px1 - dir[1] * tip * 0.42},${py1 + dir[0] * tip * 0.42}L${px1 + dir[1] * tip * 0.42},${py1 - dir[0] * tip * 0.42}Z`);
         }
         const side = bend < 0 ? -1 : 1;
-        const spot = [(a[0] + b[0]) / 2 + normal[0] * (bend / 2 + side * 34), (a[1] + b[1]) / 2 + normal[1] * (bend / 2 + side * 34)];
+        const out = [normal[0] * side, normal[1] * side];
+        const spot = [(a[0] + b[0]) / 2 + out[0] * (bend / 2 + (Math.abs(out[0]) > 0.45 ? 18 : 34)), (a[1] + b[1]) / 2 + out[1] * (bend / 2 + 32)];
         const vecEnd = item.def.to ?? item.def.at;
-        label(item, "label", item.def.label, free(isPair(vecEnd) && item.def.type === "vector" ? [b[0] + dir[0] * 26 + normal[0] * 22, b[1] + dir[1] * 26 + normal[1] * 22] : spot));
+        const vecSpot = [b[0] + dir[0] * 28, b[1] + dir[1] * 28 - (Math.abs(dir[1]) < 0.15 ? 22 : 0)];
+        const anchor = isPair(vecEnd) && item.def.type === "vector" ? "translate(-50%, -50%)" : out[0] > 0.45 ? "translate(0, -50%)" : out[0] < -0.45 ? "translate(-100%, -50%)" : "translate(-50%, -50%)";
+        label(item, "label", item.def.label, free(isPair(vecEnd) && item.def.type === "vector" ? vecSpot : spot), anchor);
     };
 
     const BUILD = {
@@ -426,16 +429,18 @@ function build(spec, world, katex) {
                     return `M${q[0] - n[0] * 8},${q[1] - n[1] * 8}L${q[0] + n[0] * 8},${q[1] + n[1] * 8}`;
                 };
                 ticks.setAttribute("d", [...marks(x0, x1, xs).map((v) => tick([v, ay], [1, 0])), ...marks(y0, y1, ys).map((v) => tick([ax, v], [0, 1]))].join(""));
+                const crossX = y0 < 0 && y1 > 0;
+                const crossY = x0 < 0 && x1 > 0;
                 numbers.forEach(([axisName, v], i) => {
                     const [x, y] = baseMap(axisName === "x" ? [v, ay] : [ax, v]);
-                    const [dx, dy, anchor] = axisName === "x" ? [0, 36, "middle"] : [-16, 10, "end"];
+                    const [dx, dy, anchor] = axisName === "x" ? [crossX ? 10 : 0, 36, crossX ? "start" : "middle"] : [-14, crossY ? 24 : 10, "end"];
                     Object.entries({ x: x + dx, y: y + dy, "text-anchor": anchor }).forEach(([key, val]) => texts[i].setAttribute(key, val));
                 });
                 const [xl, yl] = Array.isArray(d.labels) ? d.labels : [];
                 const xe = baseMap([x1, ay]);
                 const ye = baseMap([ax, y1]);
-                label(item, "x", xl, [xe[0] + 16, xe[1] + 22], "translate(-100%, 0)");
-                label(item, "y", yl, [ye[0], ye[1] - 30], "translate(-50%, -100%)");
+                label(item, "x", xl, [xe[0] + 24, xe[1]], "translate(0, -50%)");
+                label(item, "y", yl, [ye[0] + 18, ye[1] - 8], "translate(0, -50%)");
             };
         },
         plot(item) {
@@ -564,12 +569,17 @@ function build(spec, world, katex) {
     // Keeps written elements and labels apart: each steps aside from those written before it, and glides there.
     const declutter = () => {
         const entries = [];
+        const taken = [];
         for (const item of items.values()) {
             if (!item.shown || item.leaving || item.opacity <= 0.05) continue;
+            if (item.def.type === "dot") {
+                const [ox, oy] = shift(item);
+                const b = item.circle.getBBox();
+                if (b.width) taken.push({ x: b.x + ox - 4, y: b.y + oy - 4, w: b.width + 8, h: b.height + 8 });
+            }
             if (MOVABLE.has(item.def.type)) entries.push({ item, holder: item, box: () => boxOf(item.def.id) });
             else for (const node of Object.values(item.labels ?? {})) entries.push({ item, holder: node, box: () => rectOf([node]) });
         }
-        const taken = [];
         let moving = false;
         for (const { item, holder, box: measure } of entries.sort((a, b) => a.item.order - b.item.order)) {
             const box = measure();
@@ -594,7 +604,6 @@ function build(spec, world, katex) {
     function show(item, duration, delay) {
         if (item.shown && !item.leaving) return;
         item.leaving = false;
-        item.shown = true;
         item.order ??= ++revealed;
         item.opacity = num(item.def.opacity, 1);
         const lines = [...item.g.querySelectorAll("[pathLength]")];
@@ -602,6 +611,7 @@ function build(spec, world, katex) {
         const leaves = item.nodes.flatMap(leavesOf);
         const pop = item.def.type === "dot";
         const set = (k) => {
+            item.shown = true;
             const e = smooth(k);
             for (const line of lines) Object.assign(line.style, { strokeDasharray: k < 1 ? "1 1" : "", strokeDashoffset: k < 1 ? 1 - e : "" });
             for (const node of fades) {
@@ -615,7 +625,7 @@ function build(spec, world, katex) {
             });
             if (pop) item.pulse = overshoot(k);
         };
-        set(0);
+        if (delay <= 0) set(0);
         tween(duration * (leaves.length > 12 ? 1.4 : 1), delay, set);
     }
 
@@ -674,12 +684,18 @@ function build(spec, world, katex) {
     }
 
     function surround(action, target, duration, delay) {
-        const box = boxOf(target);
-        if (!box) return;
+        if (!boxOf(target)) return;
         const id = typeof action.id === "string" ? action.id : `surround-${++made}`;
         const def = { id, type: "surround", color: action.color ?? "yellow" };
         const item = itemOf(def, paint(def.color, NAMED.yellow), 4);
-        stroke(item, "rect", { x: box.x - 14, y: box.y - 10, width: box.w + 28, height: box.h + 20, rx: 10 });
+        const rect = stroke(item, "rect", { rx: 10 });
+        item.attached = true;
+        item.draw = () => {
+            const box = boxOf(target);
+            if (!box) return;
+            for (const [k, v] of Object.entries({ x: box.x - 14, y: box.y - 10, width: box.w + 28, height: box.h + 20 })) rect.setAttribute(k, v);
+        };
+        item.draw();
         items.set(id, item);
         show(item, duration, delay);
     }
@@ -919,11 +935,11 @@ function build(spec, world, katex) {
         let box = null;
         for (const id of items.keys()) box = union(box, boxOf(id));
         if (!box || !Number.isFinite(box.x) || box.w < 1 || box.h < 1) return { x: 0, y: 0, w: W, h: H };
-        const x0 = Math.max(0, Math.min(W * 0.35, box.x - 36));
-        const y0 = Math.max(0, Math.min(H * 0.35, box.y - 28));
-        const x1 = Math.min(W, Math.max(W * 0.65, box.x + box.w + 36));
-        const y1 = Math.min(H, Math.max(H * 0.65, box.y + box.h + 28));
-        return { x: x0, y: y0, w: Math.max(200, x1 - x0), h: Math.max(140, y1 - y0) };
+        const x0 = Math.max(0, Math.min(W * 0.25, box.x - 48));
+        const y0 = Math.max(0, Math.min(H * 0.25, box.y - 36));
+        const x1 = Math.min(W, Math.max(W * 0.75, box.x + box.w + 48));
+        const y1 = Math.min(H, Math.max(H * 0.75, box.y + box.h + 44));
+        return { x: x0, y: y0, w: Math.max(400, x1 - x0), h: Math.max(260, y1 - y0) };
     };
 
     return {
@@ -938,7 +954,7 @@ function build(spec, world, katex) {
             steps.push(...more);
             for (const action of more.flat()) if (action?.do === "set") for (const [name, v] of Object.entries(action.vars ?? {})) if (!Number.isInteger(v)) whole.delete(name);
         },
-        frame(t, onLayout) {
+        frame(t) {
             now = t;
             const busy = tweens.length || flows.size || settle > 0 || easing;
             for (const tw of [...tweens]) {
@@ -961,7 +977,6 @@ function build(spec, world, katex) {
             }
             easing = declutter();
             for (const item of items.values()) if (item.attached) item.draw?.();
-            onLayout?.();
             for (const f of flows.values()) {
                 const t = Math.max(0, now - f.start) * f.speed;
                 f.dots.forEach((dot, i) => {
@@ -985,7 +1000,7 @@ function build(spec, world, katex) {
 // spec: { elements, vars, steps, autoplay, stepSeconds, loop }; returns { step(index), setInset(px), dispose() }.
 export async function renderBoard(spec, { root }) {
     const katex = await loadKatex();
-    let inset = spec.autoplay === false ? 96 : 0;
+    let inset = spec.autoplay === false ? 104 : 0;
     let envelope = null;
     let board = null;
     const stage = element("div", "board", root);
@@ -993,16 +1008,17 @@ export async function renderBoard(spec, { root }) {
     const fit = () => {
         const w = root.clientWidth || innerWidth;
         const h = Math.max(1, (root.clientHeight || innerHeight) - inset);
-        if (board) envelope = union(envelope, board.bounds());
         const b = envelope ?? { x: 0, y: 0, w: W, h: H };
         const base = Math.min(w / W, h / H);
-        const k = Math.min(w / b.w, h / b.h, base * 1.42);
+        const k = Math.min(w / b.w, h / b.h, base * 1.32);
         const tx = (w - b.w * k) / 2 - b.x * k;
         const ty = (h - b.h * k) / 2 - b.y * k;
         world.style.transform = `translate(${tx.toFixed(1)}px, ${ty.toFixed(1)}px) scale(${k.toFixed(4)})`;
     };
     fit();
     board = build(spec, world, katex);
+    board.frame(performance.now() / 1000);
+    envelope = board.bounds();
     fit();
     let timer = 0;
     const steps = Array.isArray(spec.steps) ? spec.steps : [];
@@ -1014,8 +1030,9 @@ export async function renderBoard(spec, { root }) {
             if (next >= steps.length) {
                 if (spec.loop === false) return;
                 board.dispose();
-                envelope = null;
                 board = build(spec, world, katex);
+                board.frame(performance.now() / 1000);
+                envelope = board.bounds();
                 fit();
                 next = 0;
                 timer = setTimeout(tick, 2500);
@@ -1029,7 +1046,7 @@ export async function renderBoard(spec, { root }) {
     let raf = 0;
     const loop = () => {
         raf = requestAnimationFrame(loop);
-        board.frame(performance.now() / 1000, fit);
+        board.frame(performance.now() / 1000);
     };
     loop();
     const resize = new ResizeObserver(fit);
@@ -1045,7 +1062,9 @@ export async function renderBoard(spec, { root }) {
         addSteps: (more) => board.addSteps(more),
         setInset(px) {
             const h = root.clientHeight || innerHeight;
-            inset = Math.max(0, Math.min(Math.round(num(px, 0)), h * 0.45));
+            const next = Math.max(inset, Math.min(Math.round(num(px, 0)), h * 0.42));
+            if (next === inset) return;
+            inset = next;
             fit();
         },
         dispose() {
