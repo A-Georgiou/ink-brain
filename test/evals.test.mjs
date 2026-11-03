@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { aimAt, drawnShapes } from "../evals/aim.mjs";
 import { auditBoard } from "../evals/board-audit.mjs";
 import { conversationMetrics, marksFor, pickFrames, turnsOf } from "../evals/conversation.mjs";
+import { elementsAt, snapOnto } from "../evals/elements.mjs";
 import { judgeDisagreement, limitsFor, overall, passes } from "../evals/judge.mjs";
 import { latencyMetrics, replayTimeline } from "../evals/latency.mjs";
 import { measureLayout } from "../evals/layout.mjs";
@@ -30,6 +32,7 @@ test("automatic checks cap fit, visuals, pointing and grounding", () => {
     assert.deepEqual(caps(limitsFor(run("pointing", { pointed: false, targetCovered: 60, mediaMatch: false, media: [] }), { points })), { fit: 2, visual: 2, pointing: 2 });
     assert.deepEqual(caps(limitsFor(run("research", {}, [{ name: "live_read", failed: true }]), { points })), { grounding: 2 });
     assert.deepEqual(caps(limitsFor(run("robustness", {}, [{ name: "live_control" }], { forbid: ["live_control"] }), { points: [{ said: "yes", shown: "yes" }] })), { resilience: 1 });
+    assert.deepEqual(caps(limitsFor(run("pointing-hard", { aim: { hit: true, wrong: 1 } }), { points })), { fit: 2, pointing: 3 });
 });
 
 test("a tutor run that never checks understanding cannot score as if it had", () => {
@@ -237,4 +240,30 @@ test("diagram geometry defects cap visual quality and obstructed structure", () 
     const points = [{ said: "yes", shown: "yes" }, { said: "yes", shown: "yes" }, { said: "yes", shown: "yes" }];
     const limits = limitsFor(run("diagram", { boardEdgeNodeCrossings: 1, boardTextOverflow: 1 }), { points });
     assert.deepEqual(caps(limits), { visual: 3, structure: 3 });
+});
+
+test("pointing is checked strictly against the control, its look-alikes and the later steps", () => {
+    const meta = { target: { x: 100, y: 100, w: 28, h: 28 }, also: [{ x: 300, y: 50, w: 56, h: 56 }], decoys: [{ x: 134, y: 100, w: 28, h: 28 }] };
+    const aim = (...shapes) => aimAt(meta, shapes);
+    assert.deepEqual(aim({ kind: "arrow", from: [40, 40], to: [100, 114] }), { hit: true, steps: 1, of: 2, distance: 0, wrong: 0, onTop: 0 });
+    assert.equal(aim({ kind: "arrow", from: [40, 40], to: [114, 114] }).onTop, 1);
+    assert.deepEqual(aim({ kind: "pulse", x: 148, y: 114 }), { hit: false, steps: 0, of: 2, distance: 20, wrong: 1, onTop: 0 });
+    assert.equal(aim({ kind: "circle", x: 96, y: 96, w: 36, h: 36 }).hit, true);
+    assert.equal(aim({ kind: "circle", x: 96, y: 96, w: 36, h: 36 }, { kind: "circle", x: 134, y: 100, w: 28, h: 28 }).wrong, 1);
+    assert.equal(aim({ kind: "circle", x: 400, y: 400, w: 40, h: 40 }).hit, false);
+    assert.equal(aim({ kind: "marker", x: 114, y: 114 }, { kind: "arrow", from: [250, 20], to: [330, 80] }).steps, 2);
+    assert.equal(aim().distance, null);
+    assert.deepEqual(drawnShapes({ tools: [{ name: "live_annotate", args: { shapes: [{ kind: "callout", to: [1, 2], text: "x" }, { kind: "pulse", x: 1, y: 2 }] } }] }), [{ kind: "pulse", x: 1, y: 2 }]);
+});
+
+test("recorded elements place marks the way the accessibility tree does", () => {
+    const elements = [
+        { role: "AXWebArea", x: 0, y: 0, w: 800, h: 600 },
+        { role: "AXButton", x: 190, y: 223, w: 60, h: 28 },
+        { role: "AXStaticText", x: 205, y: 229, w: 30, h: 16 },
+    ];
+    assert.deepEqual(elementsAt(elements, [214, 236]).map((e) => e.role), ["AXStaticText", "AXButton", "AXWebArea"]);
+    const [arrow, note] = snapOnto(elements, [{ kind: "arrow", from: [220, 330], to: [214, 236] }, { kind: "write", x: 5, y: 5, text: "hi" }]);
+    assert.deepEqual(arrow.to, [220, 254]);
+    assert.equal(note.x, 5);
 });

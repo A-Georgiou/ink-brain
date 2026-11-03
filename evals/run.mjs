@@ -14,7 +14,9 @@ import { describePage, Reader, siteOf } from "../src/main/reader.mjs";
 import { cleanId, Surface } from "../src/main/surface.mjs";
 import { boundsOfMarks, cropAround, isRegion, panelRect } from "../src/shared/geometry.mjs";
 import { STANDALONE_TOOLS, toToolResult } from "../src/shared/live-tools.mjs";
+import { aimAt, drawnShapes } from "./aim.mjs";
 import { conversationMetrics, marksFor, pickFrames, turnsOf } from "./conversation.mjs";
+import { snapOnto } from "./elements.mjs";
 import { Judge } from "./judge.mjs";
 import { latencyMetrics, replayTimeline } from "./latency.mjs";
 import { measureLayout } from "./layout.mjs";
@@ -70,8 +72,10 @@ async function play(scenario, dir, { reader, client, replay = null }) {
     const roots = [path.join(os.homedir(), ".copilot", "session-state"), workspace];
     const asked = turnsOf(scenario);
     const many = asked.length > 1;
-    const record = { text: "", captions: [], tools: [], frames: [], timeline: [], console: [], checks: [], controls: false, error: null, firstWords: null, firstVisual: null, firstNarration: null, writing: null, streamed: null, total: null, ...(many ? { turns: [] } : {}) };
+    const record = { text: "", captions: [], tools: [], frames: [], drawn: [], timeline: [], console: [], checks: [], controls: false, error: null, firstWords: null, firstVisual: null, firstNarration: null, writing: null, streamed: null, total: null, ...(many ? { turns: [] } : {}) };
     let turn = { ask: asked[0].ask, at: 0, text: "", captions: [], tools: [], firstWords: null, firstVisual: null, error: null };
+    const elementsFile = path.join(FIXTURES, `${fixtureOf(scenario)}.elements.json`);
+    const elements = fs.existsSync(elementsFile) ? JSON.parse(fs.readFileSync(elementsFile, "utf8")) : null;
     const stage = await openStage({ image: screen, title: meta.title, onConsole: (line) => record.console.push(line.slice(0, 400)) });
     let start = Date.now();
     const elapsed = () => Date.now() - start;
@@ -115,6 +119,12 @@ async function play(scenario, dir, { reader, client, replay = null }) {
         overlayCall,
         geometry: () => GEOMETRY,
         config: CONFIG,
+        // Marks snap onto the controls the fixture recorded, as the app does with the accessibility tree.
+        async snap(shapes) {
+            const placed = elements ? snapOnto(elements, shapes) : shapes;
+            record.drawn.push({ at: elapsed(), shapes: placed });
+            return placed;
+        },
         async look({ region } = {}) {
             const parts = [`Fresh screenshot of the user's display: image 1 is ${SCREEN.width}x${SCREEN.height} px.`];
             const images = [{ data: jpeg.toString("base64"), mimeType: "image/jpeg" }];
@@ -360,6 +370,7 @@ function measure(scenario, meta, record) {
     const boardProblems = (key) => new Set(record.frames.flatMap((f) => f.boards.flatMap((b) => b[key] ?? []))).size;
     const t = meta.target;
     const covered = record.frames.map(({ layout }) => (layout ? [layout.bubble, layout.captions, ...layout.panels].filter(Boolean).reduce((sum, r) => sum + intersection(t, r), 0) / (t.w * t.h) : 0));
+    const noted = record.frames.map(({ layout }) => (layout?.notes ?? []).reduce((sum, r) => sum + intersection(t, r), 0) / (t.w * t.h));
     return {
         media: [...media],
         mediaMatch: scenario.expect.some((m) => media.has(m)),
@@ -376,7 +387,9 @@ function measure(scenario, meta, record) {
         boardEdgeNodeCrossings: boardProblems("edgeNodeCrossings"),
         boardEdgeTextCrossings: boardProblems("edgeTextCrossings"),
         targetCovered: Math.round(100 * Math.min(1, Math.max(0, ...covered))),
+        noteCovered: scenario.category.startsWith("pointing") ? Math.round(100 * Math.min(1, Math.max(0, ...noted))) : undefined,
         pointed: scenario.mark === false ? pointedAt(t, record.tools) : undefined,
+        aim: scenario.category.startsWith("pointing") ? aimAt(meta, drawnShapes(record)) : undefined,
         reads: record.tools.filter((tool) => tool.name === "live_read").map((tool) => tool.args.url),
         ...(record.turns ? conversationMetrics(record) : {}),
     };

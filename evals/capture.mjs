@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { app, BrowserWindow, session } from "electron";
 import { Reader } from "../src/main/reader.mjs";
+import { PAGE_ELEMENTS } from "./elements.mjs";
 import { SCENARIOS } from "./scenarios.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -82,13 +83,14 @@ async function capture(scenario, reader) {
     const page = offscreen(HEIGHT - CHROME);
     try {
         await page.loadURL(scenario.url);
-        await sleep(2500);
+        await sleep(scenario.wait ?? 2500);
         const found = await page.webContents.executeJavaScript(`(() => {
             (${HELPERS})();
             (${CLEANUP})();
             const target = (${scenario.locate})();
             if (!target) return false;
             window.__inkTarget = target;
+            window.__inkNear = { also: [${(scenario.also ?? []).map((locate) => `(${locate})`)}].map((locate) => locate()), decoys: ${scenario.decoys ? `(${scenario.decoys})()` : "[]"} };
             const r = target.getBoundingClientRect();
             if (r.top < 0 || r.bottom > innerHeight) target.scrollIntoView({ block: "center" });
             return true;
@@ -96,25 +98,29 @@ async function capture(scenario, reader) {
         if (!found) throw new Error("target not found");
         await sleep(900);
         const facts = await page.webContents.executeJavaScript(`(() => {
-            // The target is what it visibly draws (text, images, empty boxes), or the whole box for controls.
-            const t = window.__inkTarget;
             const shown = (e) => e.checkVisibility({ opacityProperty: true, visibilityProperty: true });
-            let rects = [];
-            if (!t.matches("button, a, input, select")) {
-                for (const e of [t, ...t.querySelectorAll("*")]) if (((!e.children.length && !e.textContent.trim()) || e.matches("img, svg, canvas, video")) && shown(e)) rects.push(e.getBoundingClientRect());
-                const walker = document.createTreeWalker(t, NodeFilter.SHOW_TEXT);
-                for (let n; (n = walker.nextNode()); ) {
-                    if (!n.textContent.trim() || !shown(n.parentElement)) continue;
-                    const range = document.createRange();
-                    range.selectNodeContents(n);
-                    rects.push(...range.getClientRects());
+            // An element is what it visibly draws (text, images, empty boxes), or the whole box for controls.
+            const boxOf = (t) => {
+                let rects = [];
+                if (!t.matches("button, a, input, select")) {
+                    for (const e of [t, ...t.querySelectorAll("*")]) if (((!e.children.length && !e.textContent.trim()) || e.matches("img, svg, canvas, video")) && shown(e)) rects.push(e.getBoundingClientRect());
+                    const walker = document.createTreeWalker(t, NodeFilter.SHOW_TEXT);
+                    for (let n; (n = walker.nextNode()); ) {
+                        if (!n.textContent.trim() || !shown(n.parentElement)) continue;
+                        const range = document.createRange();
+                        range.selectNodeContents(n);
+                        rects.push(...range.getClientRects());
+                    }
                 }
-            }
-            rects = rects.filter((r) => r.width > 1 && r.height > 1);
-            if (!rects.length) rects = [t.getBoundingClientRect()];
-            const [l, top] = [Math.min(...rects.map((r) => r.left)), Math.min(...rects.map((r) => r.top))];
-            const [r, b] = [Math.max(...rects.map((x) => x.right)), Math.max(...rects.map((x) => x.bottom))];
-            return { title: document.title, rect: { x: l, y: top, w: r - l, h: b - top }, link: ${scenario.link ? `(${scenario.link})()` : "null"} };
+                rects = rects.filter((r) => r.width > 1 && r.height > 1);
+                if (!rects.length) rects = [t.getBoundingClientRect()];
+                const [l, top] = [Math.min(...rects.map((r) => r.left)), Math.min(...rects.map((r) => r.top))];
+                const [r, b] = [Math.max(...rects.map((x) => x.right)), Math.max(...rects.map((x) => x.bottom))];
+                return { x: l, y: top, w: r - l, h: b - top };
+            };
+            const t = window.__inkTarget;
+            const { also, decoys } = window.__inkNear;
+            return { title: document.title, rect: boxOf(t), also: also.filter(Boolean).map(boxOf), decoys: decoys.filter((e) => e && e !== t).map(boxOf), elements: (${PAGE_ELEMENTS})(), link: ${scenario.link ? `(${scenario.link})()` : "null"} };
         })()`);
         const shot = await page.webContents.capturePage();
         const frame = offscreen(HEIGHT);
@@ -125,10 +131,13 @@ async function capture(scenario, reader) {
         fs.writeFileSync(path.join(FIXTURES, `${scenario.id}.jpg`), (await frame.webContents.capturePage()).toJPEG(90));
         frame.destroy();
         fs.rmSync(html);
-        const r = facts.rect;
-        const target = { x: Math.round(r.x), y: Math.round(r.y + CHROME), w: Math.round(r.w), h: Math.round(r.h) };
+        const place = (r) => ({ x: Math.round(r.x), y: Math.round(r.y + CHROME), w: Math.round(r.w), h: Math.round(r.h) });
+        const target = place(facts.rect);
         const marks = scenario.mark === false ? [] : circle(target, [...scenario.id].reduce((sum, c) => sum + c.charCodeAt(0), 7));
         const meta = { id: scenario.id, url: scenario.url, title: facts.title, app: "Google Chrome", target, marks, link: facts.link, captured: new Date().toISOString() };
+        if (facts.also.length) meta.also = facts.also.map(place);
+        if (facts.decoys.length) meta.decoys = facts.decoys.map(place);
+        fs.writeFileSync(path.join(FIXTURES, `${scenario.id}.elements.json`), JSON.stringify(facts.elements.map((e) => ({ ...e, ...place(e) }))));
         const refUrl = scenario.reference === "page" ? scenario.url : scenario.reference === "link" ? facts.link : null;
         if (refUrl) {
             const read = await reader.read(refUrl, { allowed: () => true, timeoutMs: 20_000 }).catch((error) => ({ error: error.message }));

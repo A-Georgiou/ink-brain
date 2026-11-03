@@ -67,17 +67,20 @@ function glLost() {
     return Boolean(document.querySelector("canvas")?.getContext("webgl2")?.isContextLost());
 }
 
-// Runs in the overlay: where the answer bubble, captions and panels sit.
+// Runs in the overlay: where the answer bubble, captions, panels and the marks that hide what is under them sit.
 function layout() {
     const box = (el) => {
         const r = el.getBoundingClientRect();
         return { x: r.x, y: r.y, w: r.width, h: r.height };
     };
     const shown = (el) => el && !el.classList.contains("hidden") && el.checkVisibility({ opacityProperty: true }) && el.getBoundingClientRect().width > 0;
+    // A target dot is a 12px circle drawn around a zero-size node.
+    const dot = (el) => ({ x: el.getBoundingClientRect().x - 8, y: el.getBoundingClientRect().y - 8, w: 16, h: 16 });
     return {
         bubble: shown(document.querySelector("#bubble")) ? box(document.querySelector("#bubble")) : null,
         captions: shown(document.querySelector("#captions")) ? box(document.querySelector("#captions")) : null,
         panels: [...document.querySelectorAll("#panels .panel")].filter(shown).map(box),
+        notes: [...document.querySelectorAll("#labels .anno-label, #labels .anno-marker, #labels .hand")].filter(shown).map(box).concat([...document.querySelectorAll("#labels .target-dot")].map(dot)),
     };
 }
 

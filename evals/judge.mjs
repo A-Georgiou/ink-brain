@@ -34,6 +34,9 @@ export const CRITERIA = {
     },
 };
 
+// Harder pointing screens are graded by the same criteria.
+CRITERIA["pointing-hard"] = CRITERIA.pointing;
+
 const SYSTEM = `You grade Ink Brain, an AI tutor that lives on top of the user's screen. It answers out loud, draws on the screen and opens panels with narrated 2D motion graphics (boards), 3D models (scenes), diagrams and live demos.
 You see exactly what the user saw and read what they heard. Grade strictly, like a demanding teacher and product designer deciding whether this is ready to ship:
 - Judge the experience, not the intent. A point counts only if it was said or shown, and a visual only helps if it is legible and shows what was asked about. Good narration does not rescue a visual that fails.
@@ -93,6 +96,8 @@ function promptFor({ scenario, meta, record, metrics, reference, frames }) {
     if (scenario.category === "diagram") checks.push(`board node overlaps: ${metrics.boardNodeOverlaps ?? 0}, text outside its box: ${metrics.boardTextOverflow ?? 0}, edges crossing other nodes: ${metrics.boardEdgeNodeCrossings ?? 0}, edges crossing labels: ${metrics.boardEdgeTextCrossings ?? 0}`);
     if (metrics.pointed !== undefined) checks.push(`a mark landed on the right control: ${metrics.pointed ? "yes" : "no"}`);
     if (record.turns) checks.push(`panels Ink Brain left on screen at the end: ${metrics.panelsAtEnd} (at most ${metrics.panelsAtMost} at once, over ${metrics.turns} turns)`);
+    const { aim } = metrics;
+    if (aim) checks.push(`the nearest mark was ${aim.distance ?? "n/a"} px from the control (0 is on it), ${aim.wrong} marks pointed at look-alike controls, ${aim.steps} of ${aim.of} controls the steps need were marked, ${aim.onTop} marks sit on top of the control, notes and dots hide ${metrics.noteCovered ?? 0}% of it`);
     lines.push(`Automatic checks: ${checks.join("; ")}.`);
     if (!record.turns && record.error) lines.push(`The turn ended with an error: ${record.error}`);
     if (reference) lines.push("", "# Reference", "The source the answer should draw on, for checking facts:", reference.slice(0, 9_000));
@@ -143,6 +148,9 @@ export function limitsFor({ scenario, record, metrics }, evidence) {
     if (metrics.panelHeaderCovered >= 25) limit("visual", 3, `Ink Brain hid ${metrics.panelHeaderCovered}% of a panel's title bar`);
     if (!metrics.mediaMatch) limit("fit", 2, `it used ${metrics.media.join(" and ") || "nothing"} where ${scenario.expect.join(" or ")} suits`);
     if (metrics.pointed === false) limit("pointing", 2, "no mark landed on the control");
+    if (metrics.aim && !metrics.aim.hit) limit("pointing", 2, "no mark landed exactly on the control");
+    if (metrics.aim?.wrong) limit("pointing", 3, `${metrics.aim.wrong} marks pointed at look-alike controls`);
+    if (metrics.noteCovered >= 25) limit("visual", metrics.noteCovered >= 50 ? 2 : 3, `Ink Brain's own notes and dots hid ${metrics.noteCovered}% of the control`);
     if (scenario.category === "research" && !record.tools.some((tool) => tool.name === "live_read" && !tool.failed)) limit("grounding", 2, "it read nothing");
     if (scenario.category === "tutor") {
         const checks = Array.isArray(record.checks) ? record.checks : [];

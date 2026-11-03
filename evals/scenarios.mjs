@@ -1,4 +1,4 @@
-// Eval scenarios on real pages: locate finds the target, mark false means the user only asks, expect lists the media that answer well.
+// Eval scenarios on real pages: locate finds the target, mark false means the user only asks, expect lists the media that answer well, decoys are look-alike controls not to mark, also the later controls of a multi-step answer, wait how long a heavy page loads.
 const WIKI = "https://en.wikipedia.org/w/index.php?title=";
 const FILE = "https://commons.wikimedia.org/wiki/File:";
 const DATA = (html) => `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
@@ -584,6 +584,87 @@ export const SCENARIOS = [
         ask: "the text is too small, how do I make it bigger?",
         expect: ["annotate"],
         points: ["choose Large under Text in the Appearance menu on the right of the article"],
+    },
+    {
+        id: "pt-tf-neuron",
+        category: "pointing-hard",
+        url: "https://playground.tensorflow.org/",
+        locate: () => [...document.querySelectorAll("button")].filter((b) => b.textContent.trim() === "add" && !b.id).sort((a, b) => a.getBoundingClientRect().x - b.getBoundingClientRect().x)[0],
+        decoys: () => [...document.querySelectorAll("button")].filter((b) => /^(add|remove)$/.test(b.textContent.trim())),
+        mark: false,
+        ask: "how do I add another neuron to the first hidden layer?",
+        expect: ["annotate"],
+        points: [
+            "click the small plus button above the first hidden layer, the column of 4 neurons on the left, not the plus at the top that adds a whole layer or the one above the second layer",
+            "the layer then shows 5 neurons",
+        ],
+    },
+    {
+        id: "pt-tf-spiral",
+        category: "pointing-hard",
+        url: "https://playground.tensorflow.org/",
+        locate: () => document.querySelectorAll("canvas.data-thumbnail")[3],
+        also: [() => document.getElementById("play-pause-button")],
+        decoys: () => [...document.querySelectorAll("canvas.data-thumbnail")].slice(0, 3).concat(["reset-button", "next-step-button"].map((id) => document.getElementById(id))),
+        mark: false,
+        ask: "how do I train it on the spiral data?",
+        expect: ["annotate"],
+        points: ["pick the spiral picture, the last of the four small dataset pictures under DATA on the left", "then press the big play button at the top left to start training"],
+    },
+    {
+        id: "pt-vscode-extensions",
+        category: "pointing-hard",
+        url: "https://vscode.dev/",
+        wait: 9000,
+        locate: () => document.querySelector(".activitybar a[aria-label^='Extensions']"),
+        decoys: () => [...document.querySelectorAll(".activitybar a.action-label")].filter((a) => !a.getAttribute("aria-label").startsWith("Extensions")),
+        mark: false,
+        ask: "where do I install extensions in this editor?",
+        expect: ["annotate"],
+        points: [
+            "click the Extensions icon in the bar of icons down the left edge: the four squares with one lifted out, just below Remote Explorer",
+            "search for the extension in the box at the top of the panel that opens, then press Install on it",
+        ],
+    },
+    {
+        id: "pt-vscode-theme",
+        category: "pointing-hard",
+        url: "https://vscode.dev/",
+        wait: 9000,
+        locate: () => document.querySelector(".activitybar a[aria-label='Manage']"),
+        decoys: () => [...document.querySelectorAll(".activitybar a.action-label")].filter((a) => a.getAttribute("aria-label") !== "Manage"),
+        mark: false,
+        ask: "how do I change the colour theme?",
+        expect: ["annotate"],
+        points: [
+            "click the gear icon (Manage) at the bottom of the icon bar down the left edge",
+            "in the menu that opens choose Themes, then Color Theme, and pick one from the list; Cmd+K then Cmd+T opens the same list",
+        ],
+    },
+    {
+        id: "pt-wiki-pdf",
+        category: "pointing-hard",
+        url: `${WIKI}Bayes%27_theorem&oldid=1381079899`,
+        locate: () => document.getElementById("vector-page-tools-dropdown-checkbox"),
+        decoys: () => ["ca-history", "ca-edit", "p-lang-btn"].map((id) => document.getElementById(id)),
+        mark: false,
+        ask: "how do I save this article as a PDF?",
+        expect: ["annotate"],
+        points: [
+            "open the Tools menu, the three dots at the right end of the Read, Edit, View history row",
+            "choose Download as PDF in the menu that opens",
+        ],
+    },
+    {
+        id: "pt-hn-comments",
+        category: "pointing-hard",
+        url: "https://news.ycombinator.com/",
+        locate: () => document.querySelector("tr.athing + tr .subline > a:last-child"),
+        decoys: () => [...document.querySelectorAll(".subline > a:last-child")].slice(1, 4).concat([...document.querySelectorAll("tr.athing + tr .subline a")].slice(0, 3), [document.querySelector(".titleline > a")]),
+        mark: false,
+        ask: "how do I read what people are saying about the top story?",
+        expect: ["annotate"],
+        points: ["click the small comments link at the end of the line under the top story's title, not the title itself"],
     },
     {
         id: "binary-search",
