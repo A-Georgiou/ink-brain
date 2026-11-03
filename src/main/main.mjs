@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeImage, powerMonitor, protocol, screen, session, shell, Tray, utilityProcess } from "electron";
 import { installExtension } from "../../scripts/install-extension.mjs";
-import { pageTitle } from "../shared/anchors.mjs";
+import { pageTitle, windowTitle } from "../shared/anchors.mjs";
 import { inkGrid, needsSettling, settleMarks } from "../shared/calm.mjs";
 import { boundsOfMarks, cropAround, isRegion, modelImageSize, panelRect, snapPoint, snapShape } from "../shared/geometry.mjs";
 import { STANDALONE_TOOLS, TOOL_NAMES, toToolResult } from "../shared/live-tools.mjs";
@@ -115,7 +115,11 @@ const safely = (fn, fallback = "") => {
 const memoryOn = (part = "enabled") => config.memory.enabled && (part === "enabled" || Boolean(config.memory[part]));
 // The { app, page } memory keeps for a frontmost window, or null.
 const pageOf = (front) => (front?.app ? { app: front.app, page: pageTitle(front.title) } : null);
-const frontmost = () => helper.request("frontmost", { excludePids: [process.pid] }).catch(() => ({}));
+const frontmost = () =>
+    helper
+        .request("frontmost", { excludePids: [process.pid] })
+        .then((front) => (front.title || !front.pid ? front : { ...front, title: windowTitle(windows, front.pid) }))
+        .catch(() => ({}));
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const hotkeyLabel = () => config.hotkey.replace(/\b(CommandOrControl|CmdOrCtrl|Command)\b/g, "Cmd").replace(/\bAlt\b/g, "Option");
@@ -543,7 +547,7 @@ function wireHelper() {
         windows = Array.isArray(list) ? list : null;
         sendWindows();
         const top = windows?.[0];
-        const key = top ? `${top.pid}|${top.title}` : "";
+        const key = top ? `${top.pid}|${windowTitle(windows, top.pid)}` : "";
         if (key !== frontKey) {
             frontKey = key;
             noteScreen();

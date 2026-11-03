@@ -6,6 +6,9 @@ export function pageTitle(title) {
     return String(title ?? "").replace(/[([]\d+\+?[)\]]/g, "").replace(/^\s*[•●*]\s*/u, "").replace(/\s+/g, " ").trim();
 }
 
+// An app's first titled window, front to back, since some apps keep an untitled window in front of it.
+export const windowTitle = (windows, pid) => windows?.find((win) => win.pid === pid && win.title)?.title ?? "";
+
 const inside = (r, x, y) => x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h;
 
 // A window's anchor, keyed by its position too, so drawings made after it moves get their own layer.

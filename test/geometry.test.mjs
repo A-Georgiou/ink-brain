@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import katex from "katex";
-import { anchorAt, pageState, pageTitle } from "../src/shared/anchors.mjs";
+import { anchorAt, pageState, pageTitle, windowTitle } from "../src/shared/anchors.mjs";
 import { circleRadius, clearNodeSpot, clearSpot, diagramFrame, labelTex, linkBend, linkLabelGap, linkLabelSide, loopAround, placeLinkLabel, routeBend, routeDiagramLink, sequenceLink, validateBoard, withValues } from "../src/shared/board.mjs";
 import { inkGrid, inkIn, settleMarks } from "../src/shared/calm.mjs";
 import { compile } from "../src/shared/mathexpr.mjs";
@@ -66,6 +66,13 @@ test("drawings stay with their page: hidden on another tab or Space, back and fo
     assert.equal(pageState([{ ...chrome, page: "Other tab" }], anchor, box).visible, false);
     assert.equal(pageState([terminal], anchor, box).visible, false);
     assert.deepEqual(pageState([{ ...chrome, x: 40, y: 80 }], anchor, box), { visible: true, dx: 40, dy: 50 });
+});
+
+test("an app's title comes from its first titled window, past untitled ones in front", () => {
+    const windows = [{ pid: 7, title: "" }, { pid: 9, title: "Inbox - Mail" }, { pid: 7, title: "Verity Mod - YouTube" }];
+    assert.equal(windowTitle(windows, 7), "Verity Mod - YouTube");
+    assert.equal(windowTitle(windows, 3), "");
+    assert.equal(windowTitle(null, 7), "");
 });
 
 test("a page hides when another window covers its drawings, not when it sits beside them", () => {
