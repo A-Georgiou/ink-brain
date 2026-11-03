@@ -164,6 +164,7 @@ export async function renderScene(spec, { root, makeLabel, inPlace = false }) {
     let hovered = null;
     let dragging = false;
     let aimed = false;
+    let near = false;
     const pointer = new THREE.Vector2();
     const ray = new THREE.Raycaster();
     controls.addEventListener("start", () => {
@@ -174,10 +175,10 @@ export async function renderScene(spec, { root, makeLabel, inPlace = false }) {
     renderer.domElement.addEventListener("pointermove", (event) => {
         const r = renderer.domElement.getBoundingClientRect();
         pointer.set(((event.clientX - r.left) / r.width) * 2 - 1, 1 - ((event.clientY - r.top) / r.height) * 2);
-        aimed = true;
+        aimed = near = true;
     });
     renderer.domElement.addEventListener("pointerleave", () => {
-        aimed = false;
+        aimed = near = false;
         hovered = null;
     });
 
@@ -1103,7 +1104,9 @@ export async function renderScene(spec, { root, makeLabel, inPlace = false }) {
         }
         pen.font = LABEL_FONT;
         pen.textBaseline = "middle";
-        for (const l of drawn.filter((d) => d.pill)) {
+        // Leaders, then dots, then pills, so no dot covers a label; resting dots only show while the pointer is over the model.
+        const pills = drawn.filter((d) => d.pill);
+        for (const l of pills) {
             const [a, p] = [l.screen, l.pill];
             pen.globalAlpha = l.fade * l.open;
             pen.beginPath();
@@ -1112,6 +1115,21 @@ export async function renderScene(spec, { root, makeLabel, inPlace = false }) {
             pen.lineWidth = 1.5;
             pen.strokeStyle = "rgba(230, 237, 243, 0.8)";
             pen.stroke();
+        }
+        for (const l of drawn) {
+            if (!l.pill && !near) continue;
+            pen.globalAlpha = l.fade * (l.hidden ? 0.55 : 1) * (l.pill && !near ? l.open : 1);
+            pen.beginPath();
+            pen.arc(l.screen.x, l.screen.y, 4, 0, Math.PI * 2);
+            pen.lineWidth = 2.5;
+            pen.strokeStyle = "rgba(13, 17, 23, 0.85)";
+            pen.stroke();
+            pen.fillStyle = rank(l) < 2 ? "#d2a8ff" : "#e6edf3";
+            pen.fill();
+        }
+        for (const l of pills) {
+            const p = l.pill;
+            pen.globalAlpha = l.fade * l.open;
             pen.beginPath();
             pen.roundRect(p.left, p.top, l.width, PILL_PX, PILL_PX / 2);
             pen.fillStyle = "rgba(13, 17, 23, 0.88)";
@@ -1121,16 +1139,6 @@ export async function renderScene(spec, { root, makeLabel, inPlace = false }) {
             pen.stroke();
             pen.fillStyle = "#e6edf3";
             pen.fillText(l.text, p.left + 9, p.top + PILL_PX / 2 + 0.5);
-        }
-        for (const l of drawn) {
-            pen.globalAlpha = l.fade * (l.hidden ? 0.55 : 1);
-            pen.beginPath();
-            pen.arc(l.screen.x, l.screen.y, 4, 0, Math.PI * 2);
-            pen.lineWidth = 2.5;
-            pen.strokeStyle = "rgba(13, 17, 23, 0.85)";
-            pen.stroke();
-            pen.fillStyle = rank(l) < 2 ? "#d2a8ff" : "#e6edf3";
-            pen.fill();
         }
         pen.globalAlpha = 1;
     };
