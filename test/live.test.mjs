@@ -9,6 +9,7 @@ import { Controller } from "../src/main/control.mjs";
 import { ExplainPlayer } from "../src/main/explain.mjs";
 import { clearStaleGrants } from "../src/main/helper.mjs";
 import { readImageFile } from "../src/main/images.mjs";
+import { createCheckWaiter, describeAnswer, normalizeCheck, validateCheck } from "../src/main/tutor.mjs";
 import { Voice } from "../src/main/voice.mjs";
 
 test("images can only be read from Copilot's own image folders", () => {
@@ -141,6 +142,17 @@ test("a streamed explanation whose call never finishes plays the steps it has on
     await tick();
     await tick();
     assert.equal(log.at(-1), "expire explain-1");
+});
+
+test("a check names the misconception behind a spoken wrong answer", async () => {
+    const check = normalizeCheck({ question: "Where does it land?", choices: [{ label: "On zero", misconception: "they think the point is the origin" }, { label: "On minus one", correct: true }] });
+    assert.equal(validateCheck({ question: "Where?", choices: [{ label: "Only one" }] }), "live_check needs 2 to 4 choices with labels");
+    assert.equal(validateCheck(check), null);
+    const waiter = createCheckWaiter({ show: async () => {}, pick: () => {}, timeoutMs: 50 });
+    const pending = waiter.ask(check);
+    await tick();
+    assert.equal(waiter.answerText("it lands on zero"), true);
+    assert.match(describeAnswer(check, await pending), /origin/);
 });
 
 test("interrupting an explanation stops it and reports how far it got", async () => {

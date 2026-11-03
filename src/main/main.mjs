@@ -22,6 +22,7 @@ import { APP_SCHEME, registerAppProtocol } from "./protocol.mjs";
 import { buildTurnPrompt, systemMessage } from "./prompt.mjs";
 import { describePage, Reader, siteAllowed, siteOf } from "./reader.mjs";
 import { cleanId, Surface } from "./surface.mjs";
+import { createCheckWaiter, publicChoices } from "./tutor.mjs";
 import { Voice } from "./voice.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -61,6 +62,7 @@ let embedded = null;
 let surface = null;
 let reader = null;
 let explainer = null;
+let checks = null;
 let controller = null;
 
 let geometry = null;
@@ -296,6 +298,8 @@ function runCommand(name, value) {
             return decide(webRequests, value);
         case "stopControl":
             return controller?.stop("the user stopped it");
+        case "checkAnswer":
+            return checks?.answer(value);
         case "restartHelper":
             return restartHelper();
         case "clearAll":
@@ -505,7 +509,10 @@ function recentHeard() {
 
 function wireHelper() {
     helper.on("stt.partial", ({ text }) => send("live:transcript", { text, final: false }));
-    helper.on("stt.final", ({ text }) => send("live:transcript", { text, final: true, submit: acceptUtterance(text) }));
+    helper.on("stt.final", ({ text }) => {
+        if (checks?.answerText(text)) return send("live:transcript", { text, final: true, submit: false });
+        send("live:transcript", { text, final: true, submit: acceptUtterance(text) });
+    });
     helper.on("stt.level", ({ level }) => send("live:level", { level }));
     helper.on("stt.state", ({ listening }) => {
         if (!listening && state.listening) {
@@ -1348,6 +1355,10 @@ async function debugAction(params) {
 
 // The tool runner and what it drives: the web reader, narrated explanations and taking control.
 function createTools() {
+    checks = createCheckWaiter({
+        show: (check) => overlayCall("check", { question: check.question, choices: publicChoices(check.choices) }),
+        pick: (answer) => overlayCall("check-pick", { id: answer?.id ?? "", correct: Boolean(answer?.correct) }).catch(() => {}),
+    });
     surface = new Surface({
         overlayCall,
         look,
@@ -1357,6 +1368,7 @@ function createTools() {
         regionImage,
         readImage: (file) => readImageFile(file, imageRoots()),
         explain: (args, origin, callId) => explainer.play(args, callId),
+        askCheck: (check) => checks.ask(check),
         cutout,
         image: showImage,
         control: (args, origin) => controller.run(args, origin),

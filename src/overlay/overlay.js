@@ -26,6 +26,7 @@ $(".bubble-close").innerHTML = ICONS.close;
 const TOOL_LABELS = {
     live_annotate: "Sketching on your screen",
     live_explain: "Explaining",
+    live_check: "Checking you understood",
     live_panel: "Building a live view",
     live_cutout: "Pulling it out",
     live_image: "Showing a render",
@@ -364,6 +365,50 @@ function createBubble() {
     };
 }
 
+const checkCard = (() => {
+    const card = $("#check-card");
+    const note = card.querySelector(".check-note");
+    let timer = 0;
+    const hide = () => {
+        clearTimeout(timer);
+        card.classList.add("hidden");
+    };
+    card.addEventListener("click", (event) => {
+        const button = event.target.closest("button[data-choice]");
+        if (!button || button.disabled) return;
+        for (const el of card.querySelectorAll("button")) el.disabled = true;
+        button.classList.add("picked");
+        api.command("checkAnswer", { id: button.dataset.choice });
+    });
+    return {
+        show({ question, choices }) {
+            clearTimeout(timer);
+            card.querySelector(".check-question").textContent = question;
+            note.textContent = "Pick one, or say your answer.";
+            const list = card.querySelector(".check-choices");
+            list.replaceChildren(
+                ...(Array.isArray(choices) ? choices : []).map((choice) => {
+                    const button = document.createElement("button");
+                    button.type = "button";
+                    button.className = "check-choice";
+                    button.dataset.choice = choice.id;
+                    button.textContent = choice.label;
+                    return button;
+                }),
+            );
+            card.classList.remove("hidden");
+        },
+        pick({ id, correct } = {}) {
+            const button = [...card.querySelectorAll("button")].find((el) => el.dataset.choice === id);
+            if (button) button.classList.add("picked", correct ? "right" : "wrong");
+            for (const el of card.querySelectorAll("button")) el.disabled = true;
+            note.textContent = id ? (correct ? "That's the one." : "Not quite. Listen for why.") : "Say a bit more, or pick one.";
+            timer = setTimeout(hide, 45_000);
+        },
+        hide,
+    };
+})();
+
 const captions = (() => {
     const el = $("#captions");
     const steps = el.querySelector(".caption-steps");
@@ -391,6 +436,7 @@ const captions = (() => {
     return (event) => {
         clearTimeout(hideTimer);
         if (event.type === "start") {
+            checkCard.hide();
             scene = event.scene ?? null;
             steps.replaceChildren(...Array.from({ length: event.total }, () => document.createElement("i")));
             line.textContent = event.title || "";
@@ -582,6 +628,7 @@ api.on("live:call", async ({ id, method, params }) => {
             result = { duration };
         } else if (method === "expire") annotations.expire(params.group, params.seconds);
         else if (method === "panel") {
+            checkCard.hide();
             result = await panels.show(params);
             bubble.reflow();
         } else if (method === "cutout") result = panels.showCutout(params);
@@ -590,6 +637,8 @@ api.on("live:call", async ({ id, method, params }) => {
             bubble.reflow();
         } else if (method === "scene-step") panels.step(params.id, params.index);
         else if (method === "scene-steps") panels.addSteps(params.id, params.steps);
+        else if (method === "check") checkCard.show(params);
+        else if (method === "check-pick") checkCard.pick(params);
         else if (method === "clear") {
             const visibleOnly = params.scope === "visible";
             if (params.target !== "panels") annotations.clear(params.id, params.group, { visibleOnly });

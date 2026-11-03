@@ -60,7 +60,7 @@ test("session extension tools reach the overlay and overlay questions run in the
         return { text: "drawn", images: [{ data: "aGk=", mimeType: "image/png" }] };
     });
 
-    assert.deepEqual(tools.map((tool) => tool.name), ["live_annotate", "live_explain", "live_panel", "live_cutout", "live_image", "live_control", "live_clear", "live_look", "live_speak"]);
+    assert.deepEqual(tools.map((tool) => tool.name), ["live_annotate", "live_explain", "live_check", "live_panel", "live_cutout", "live_image", "live_control", "live_clear", "live_look", "live_speak"]);
     assert.ok(tools.every((tool) => tool.skipPermission));
 
     const result = await tools[0].handler({ shapes: [{ kind: "circle", x: 1, y: 2, w: 3, h: 4 }] });

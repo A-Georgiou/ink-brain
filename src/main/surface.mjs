@@ -3,6 +3,7 @@ import katex from "katex";
 import { katexOptions, texSources, validateBoard, withValues } from "../shared/board.mjs";
 import { isRegion, panelRect, shapeToOverlay, validateShape } from "../shared/geometry.mjs";
 import { validateScene } from "../shared/scene.mjs";
+import { describeAnswer, normalizeCheck, validateCheck } from "./tutor.mjs";
 
 const PANEL_KINDS = new Set(["markdown", "mermaid", "three", "html", "scene", "board"]);
 const MAX_PANEL_CHARS = 200_000;
@@ -34,8 +35,8 @@ export class Surface {
     #panelCount = 0;
 
     // Tool handlers take (args, origin) and memory (name, args, origin); image readers return data URLs; snap(shapes) may move marks onto real controls.
-    constructor({ overlayCall, look, say, geometry, config, regionImage, readImage, explain, cutout, image, control, read, memory, snap = null }) {
-        Object.assign(this, { overlayCall, look, say, geometry, config, regionImage, readImage, explain, cutout, image, control, read, memory, snap });
+    constructor({ overlayCall, look, say, geometry, config, regionImage, readImage, explain, cutout, image, control, read, memory, askCheck = null, snap = null }) {
+        Object.assign(this, { overlayCall, look, say, geometry, config, regionImage, readImage, explain, cutout, image, control, read, memory, askCheck, snap });
     }
 
     // callId identifies the model's tool call, so an explanation already playing from its streamed arguments carries on.
@@ -45,6 +46,8 @@ export class Surface {
                 return this.#annotate(args);
             case "live_explain":
                 return this.explain({ ...args, steps: asObject(args.steps), scene: asObject(args.scene), board: asObject(args.board) }, origin, callId);
+            case "live_check":
+                return this.#check(args);
             case "live_panel":
                 return this.#panel({ ...args, scene: asObject(args.scene), board: asObject(args.board) });
             case "live_cutout":
@@ -157,6 +160,15 @@ export class Surface {
 
     sceneStep(id, index) {
         return this.overlayCall("scene-step", { id, index }).catch(() => {});
+    }
+
+    async #check(args) {
+        const problem = validateCheck(args);
+        if (problem) return { text: `${problem}.`, failed: true };
+        if (!this.askCheck) return { text: "Checking understanding is not available right now.", failed: true };
+        const check = normalizeCheck(args);
+        const answer = await this.askCheck(check);
+        return { text: describeAnswer(check, answer) };
     }
 
     // Adds narrated steps to a stage already on screen, from step first on; board transforms whose TeX fails are dropped.
