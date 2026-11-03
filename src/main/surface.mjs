@@ -35,9 +35,9 @@ export class Surface {
     #panelCount = 0;
     #shown = new Map();
 
-    // Tool handlers take (args, origin) and memory (name, args, origin); image readers return data URLs; snap(shapes) may move marks onto real controls.
-    constructor({ overlayCall, look, say, geometry, config, regionImage, readImage, explain, cutout, image, control, read, memory, askCheck = null, snap = null }) {
-        Object.assign(this, { overlayCall, look, say, geometry, config, regionImage, readImage, explain, cutout, image, control, read, memory, askCheck, snap });
+    // Tool handlers take (args, origin) and memory (name, args, origin); image readers return data URLs; snap(shapes) may move marks onto real controls and calm(shapes) notes onto quiet parts of the screen.
+    constructor({ overlayCall, look, say, geometry, config, regionImage, readImage, explain, cutout, image, control, read, memory, askCheck = null, snap = null, calm = null }) {
+        Object.assign(this, { overlayCall, look, say, geometry, config, regionImage, readImage, explain, cutout, image, control, read, memory, askCheck, snap, calm });
     }
 
     // callId identifies the model's tool call, so an explanation already playing from its streamed arguments carries on.
@@ -86,8 +86,9 @@ export class Surface {
         }
         if (!valid.length) return { drawn: 0, snapped: 0, duration: 0, problems };
         const placed = this.snap ? await this.snap(valid).catch(() => valid) : valid;
+        const settled = this.calm ? await this.calm(placed).catch(() => placed) : placed;
         const mapped = [];
-        for (const shape of placed) {
+        for (const shape of settled) {
             const out = { ...shapeToOverlay(shape, scale), id: cleanId(shape.id) || undefined };
             if (shape.kind === "lens") out.image = await this.regionImage(shape).catch(() => null);
             mapped.push(out);

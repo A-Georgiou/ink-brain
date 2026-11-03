@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { anchorAt, pageState, pageTitle } from "../src/shared/anchors.mjs";
 import { clearSpot, validateBoard, withValues } from "../src/shared/board.mjs";
+import { inkGrid, inkIn, settleCallouts } from "../src/shared/calm.mjs";
 import { compile } from "../src/shared/mathexpr.mjs";
 import { validateScene } from "../src/shared/scene.mjs";
 import { traceOutline } from "../src/shared/trace.mjs";
@@ -186,6 +187,23 @@ test("marks beside a control carry its box, scaled with the screen, so it can be
     assert.equal(snapShape({ kind: "pulse", x: 214, y: 236 }, button).target, undefined);
     assert.equal(snapShape({ kind: "callout", x: 214, y: 236, text: "x" }, [{ role: "AXLink", x: 0, y: 0, w: 900, h: 300 }]).target, undefined);
     assert.deepEqual(shapeToOverlay({ kind: "marker", x: 20, y: 30, target: box }, 0.5).target, { x: 380, y: 446, w: 120, h: 56 });
+});
+
+test("callouts settle onto quiet parts of the screen, keep off what they point at and stay put when already quiet", () => {
+    const [width, height] = [400, 300];
+    const data = new Uint8ClampedArray(width * height * 4).fill(255);
+    for (let y = 100; y < 200; y++) for (let x = 60; x < 340; x++) if ((x + y) % 4 < 2) data.fill(20, (y * width + x) * 4, (y * width + x) * 4 + 3);
+    const grid = inkGrid({ width, height, data });
+    const view = { width, height };
+    assert.ok(inkIn(grid, { x: 100, y: 120, w: 100, h: 30 }) > 10);
+    assert.equal(inkIn(grid, { x: 20, y: 220, w: 100, h: 30 }), 0);
+    const target = { x: 180, y: 135, w: 40, h: 30 };
+    const [moved] = settleCallouts([{ kind: "callout", x: 200, y: 150, at: [200, 150], text: "Click here", target }], grid, view);
+    const box = { x: moved.at[0] - 68, y: moved.at[1] - 19, w: 136, h: 38 };
+    assert.ok(inkIn(grid, box) <= 1);
+    assert.equal(overlapArea(box, [target]), 0);
+    const quiet = { kind: "callout", x: 200, y: 150, at: [100, 250], text: "Click here" };
+    assert.equal(settleCallouts([quiet], grid, view)[0], quiet);
 });
 
 test("3D stages take the most free room beside the circled thing and only ever clip a corner of it", () => {

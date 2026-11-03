@@ -12,6 +12,7 @@ import { APP_SCHEME, registerAppProtocol } from "../src/main/protocol.mjs";
 import { buildTurnPrompt, systemMessage } from "../src/main/prompt.mjs";
 import { describePage, Reader, siteOf } from "../src/main/reader.mjs";
 import { cleanId, Surface } from "../src/main/surface.mjs";
+import { inkGrid, inkIn, settleCallouts } from "../src/shared/calm.mjs";
 import { boundsOfMarks, cropAround, isRegion, panelRect } from "../src/shared/geometry.mjs";
 import { STANDALONE_TOOLS, toToolResult } from "../src/shared/live-tools.mjs";
 import { aimAt, drawnShapes } from "./aim.mjs";
@@ -64,7 +65,7 @@ const overlayState = (thinking) => ({ pen: false, listening: false, thinking, sp
 const fixtureOf = (scenario) => scenario.fixture ?? scenario.id;
 
 // Plays one turn on the stage and records what the user would see and hear.
-async function play(scenario, dir, { reader, client, replay = null }) {
+async function play(scenario, dir, { reader, client, replay = null, grid }) {
     const meta = JSON.parse(fs.readFileSync(path.join(FIXTURES, `${fixtureOf(scenario)}.json`), "utf8"));
     const jpeg = fs.readFileSync(path.join(FIXTURES, `${fixtureOf(scenario)}.jpg`));
     const screen = `data:image/jpeg;base64,${jpeg.toString("base64")}`;
@@ -119,11 +120,14 @@ async function play(scenario, dir, { reader, client, replay = null }) {
         overlayCall,
         geometry: () => GEOMETRY,
         config: CONFIG,
-        // Marks snap onto the controls the fixture recorded, as the app does with the accessibility tree.
+        // Marks snap onto the controls the fixture recorded, as the app does with the accessibility tree, and callouts settle onto quiet parts of the picture.
         async snap(shapes) {
-            const placed = elements ? snapOnto(elements, shapes) : shapes;
-            record.drawn.push({ at: elapsed(), shapes: placed });
-            return placed;
+            return elements ? snapOnto(elements, shapes) : shapes;
+        },
+        async calm(shapes) {
+            const settled = settleCallouts(shapes, grid, SCREEN);
+            record.drawn.push({ at: elapsed(), shapes: settled });
+            return settled;
         },
         async look({ region } = {}) {
             const parts = [`Fresh screenshot of the user's display: image 1 is ${SCREEN.width}x${SCREEN.height} px.`];
@@ -351,8 +355,8 @@ function pointedAt(target, tools) {
     });
 }
 
-// Measures what the judge cannot count reliably: media, failures, latency, overlaps and covering the target.
-function measure(scenario, meta, record) {
+// Measures what the judge cannot count reliably: media, failures, latency, overlaps and covering the target; grid is how busy the screen is, for how much its notes cover.
+function measure(scenario, meta, record, grid) {
     const media = new Set();
     for (const { name, args = {} } of record.tools) {
         if (name === "live_explain") {
@@ -388,6 +392,7 @@ function measure(scenario, meta, record) {
         boardEdgeTextCrossings: boardProblems("edgeTextCrossings"),
         targetCovered: Math.round(100 * Math.min(1, Math.max(0, ...covered))),
         noteCovered: scenario.category.startsWith("pointing") ? Math.round(100 * Math.min(1, Math.max(0, ...noted))) : undefined,
+        noteInk: scenario.category.startsWith("pointing") ? Math.max(0, ...record.frames.flatMap(({ layout }) => (layout?.notes ?? []).map((note) => inkIn(grid, note)))) : undefined,
         pointed: scenario.mark === false ? pointedAt(t, record.tools) : undefined,
         aim: scenario.category.startsWith("pointing") ? aimAt(meta, drawnShapes(record)) : undefined,
         reads: record.tools.filter((tool) => tool.name === "live_read").map((tool) => tool.args.url),
@@ -442,6 +447,8 @@ async function evaluatePair(scenario, attempt, pairJudge) {
 async function evaluate(scenario, attempt, { reader, client, judge }) {
     const id = attempt > 1 ? `${scenario.id}~${attempt}` : scenario.id;
     const dir = path.join(OUT, id);
+    const picture = nativeImage.createFromPath(path.join(FIXTURES, `${fixtureOf(scenario)}.jpg`));
+    const grid = inkGrid({ ...picture.getSize(), data: picture.toBitmap() });
     let record;
     if (argv.includes("--rejudge")) {
         record = JSON.parse(fs.readFileSync(path.join(dir, "record.json"), "utf8"));
@@ -456,12 +463,12 @@ async function evaluate(scenario, attempt, { reader, client, judge }) {
             record =
                 REPLAY && !replay
                     ? { text: "", captions: [], tools: [], frames: [], error: `no recorded run of ${id} in ${REPLAY}` }
-                    : await play(scenario, dir, { reader, client, replay }).catch((error) => ({ text: "", captions: [], tools: [], frames: [], error: `eval failed: ${error.message}` }));
+                    : await play(scenario, dir, { reader, client, replay, grid }).catch((error) => ({ text: "", captions: [], tools: [], frames: [], error: `eval failed: ${error.message}` }));
         }
         fs.writeFileSync(path.join(dir, "record.json"), JSON.stringify(record, null, 1));
     }
     const meta = JSON.parse(fs.readFileSync(path.join(FIXTURES, `${fixtureOf(scenario)}.json`), "utf8"));
-    const metrics = measure(scenario, meta, record);
+    const metrics = measure(scenario, meta, record, grid);
     let verdict = {};
     if (judge && fs.existsSync(path.join(dir, "00-screen.jpg"))) {
         const referenceFile = path.join(FIXTURES, `${fixtureOf(scenario)}.reference.txt`);

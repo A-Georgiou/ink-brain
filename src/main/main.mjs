@@ -3,9 +3,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, powerMonitor, protocol, screen, session, shell, Tray, utilityProcess } from "electron";
+import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeImage, powerMonitor, protocol, screen, session, shell, Tray, utilityProcess } from "electron";
 import { installExtension } from "../../scripts/install-extension.mjs";
 import { pageTitle } from "../shared/anchors.mjs";
+import { hasCallouts, inkGrid, settleCallouts } from "../shared/calm.mjs";
 import { boundsOfMarks, cropAround, isRegion, modelImageSize, panelRect, snapPoint, snapShape } from "../shared/geometry.mjs";
 import { STANDALONE_TOOLS, TOOL_NAMES, toToolResult } from "../shared/live-tools.mjs";
 import { SpeechChunker } from "../shared/speech.mjs";
@@ -655,6 +656,16 @@ async function snapShapes(shapes) {
     const model = ({ role, frame: [x, y, w, h] }) => ({ role, x: (x - g.bounds.x) * g.scale, y: (y - g.bounds.y) * g.scale, w: w * g.scale, h: h * g.scale });
     let next = 0;
     return shapes.map((shape, index) => (wanted[index] ? snapShape(shape, (found.elements[next++] ?? []).map(model)) : shape));
+}
+
+// Callouts settle onto quiet parts of the screen, judged from a fresh look at it.
+async function quietCallouts(shapes) {
+    if (!hasCallouts(shapes)) return shapes;
+    const g = geometry;
+    const shot = await helper.request("capture", { displayId: g.displayId, excludePids: [process.pid], format: "jpeg", quality: 0.8, maxLongEdge: Math.max(g.modelWidth, g.modelHeight) }, { timeoutMs: 8_000 });
+    const image = nativeImage.createFromBuffer(Buffer.from(shot.data, "base64"));
+    const { width, height } = image.getSize();
+    return settleCallouts(shapes, inkGrid({ width, height, data: image.toBitmap() }), { width, height });
 }
 
 // A region in screenshot pixels as overlay pixels, clamped to the display.
@@ -1378,6 +1389,7 @@ function createTools() {
         read: readWeb,
         memory: memoryTool,
         snap: snapShapes,
+        calm: quietCallouts,
     });
     // A plain Chrome user agent, so sites serve the reader the same page they serve the user.
     reader = new Reader({ BrowserWindow, session, userAgent: app.userAgentFallback.replace(new RegExp(` (${escapeRegExp(app.getName())}|Electron)/\\S+`, "g"), "") });
