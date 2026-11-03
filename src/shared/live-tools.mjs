@@ -144,11 +144,11 @@ const SCENE_OBJECT = {
                 "box (size [w, h, d]; radius rounds the corners, 0 is sharp), sphere (radius), cylinder (radius, height, radius_top), cone (radius, height), torus (radius, tube), capsule (radius, length), plane (size [w, h]), " +
                 "loft (sections: a smooth body through cross-sections along x, closed at both ends: vehicle bodies, fuselages, hulls, bottles, animals, organs, handles; or region: its picture in a side or front view, whose silhouette is traced for you so it has the true profile), " +
                 "extrude (points: a flat [x, y] outline with optional holes, depth thick: panels, brackets, plates, blades, silhouettes), lathe (points: a [radius, y] profile spun around y: wheels, knobs, bottles, pistons, lenses, bolts), gear (radius, teeth, depth, hole; faces the front), spring (radius, height, coils, tube), " +
-                "text (text, size [height]), arrow (from, to), path (points: a tube along them, with radii to taper or bulge it; curve false for straight segments, closed), " +
+                "text (text, size [height]), arrow (from, to), path (points: a tube along them, with radii to taper or bulge it; curve false for straight segments, closed; style chain wraps a roller chain round the wheels its closed loop passes), " +
                 "wire (from, to: a cable that arcs between two parts and stays attached when they move; style ribbon is a flat cable, and style rod a straight rigid link joining the two parts' middles, such as a strut, linkage arm or push rod; reveal it with show and it lays itself from end to end), group (a parent that moves its children together), " +
                 "image (src: the saved path of an image from image_generation, size [height]), " +
                 "base (the body of a flat thing pictured on screen from above or the front, such as a circuit board, panel or keyboard, wearing that picture on its face: region is its picture in screenshot pixels, size [width, thickness] in real units, the depth follows the picture; its outline is traced for you, and holes [x, y, radius] are marked on the picture), " +
-                "part (a ready-made electronic component, modelled in detail: part names it; facing is the picture edge its opening faces; color tints its plastic, insert or light). " +
+                "part (a ready-made component, modelled in detail instead of approximated with blocks: part names it, from gears and blade rings to lenses, cams and connectors; facing is the picture edge an electronic one's opening faces; color tints it). " +
                 "Anything with on (a base id) and at (its centre in the picture, screenshot pixels) stands on that base exactly where it is in the picture, with footprint (its size in the picture) and height (how tall it really is); text on a base is printed on it.",
         },
         position: vec3,
@@ -159,7 +159,7 @@ const SCENE_OBJECT = {
         radius_top: { type: "number" },
         height: { type: "number", description: "cylinder, cone: height. On a base: how tall it really stands. On a traced loft: its depth across (z)." },
         tube: { type: "number" },
-        length: { type: "number" },
+        length: { type: "number", description: "capsule, part rack, thread: how long it is." },
         from: { description: "arrow: [x, y, z]. wire: an object id, a grid copy such as pins#3, or [x, y, z]." },
         to: { description: "arrow: [x, y, z]. wire: an object id, a grid copy such as pins#3, or [x, y, z]." },
         sag: { type: "number", description: "wire: how much it arcs (default 1; negative droops)." },
@@ -199,7 +199,8 @@ const SCENE_OBJECT = {
             },
             description: "loft: its cross-sections in order along its length; the surface flows smoothly through them. Use 6 to 20, closer together where the shape changes quickly, such as at a rounded nose.",
         },
-        teeth: { type: "integer", description: "gear: number of teeth." },
+        teeth: { type: "integer", description: "gear: number of teeth. part: teeth, blades, spokes or sides." },
+        bulge: { type: "number", description: "part lens: how strongly it curves (default 0.3 of its radius; negative is concave). cam: its lift above the base circle. blades: their pitch in degrees." },
         coils: { type: "number", description: "spring: number of turns." },
         hole: { type: "number", description: "gear: radius of the hole for its axle." },
         holes: { type: "array", maxItems: 40, items: { type: "array" }, description: "extrude: outlines cut out of it. base: [x, y, radius] circles in screenshot pixels." },
@@ -214,7 +215,16 @@ const SCENE_OBJECT = {
                 "Traced on the picture in screenshot pixels; leave it out and it is traced from the picture for you. base: its outline. " +
                 "loft: its silhouette in a side or front view, instead of sections; size is then [its real length across the region, its real width], round, top and bottom shape every section, and x = 0 is the middle of the region and y = 0 its bottom edge.",
         },
-        part: { type: "string", enum: PART_KINDS, description: "part: which component. header and socket take grid [columns, rows], order and first (the picture corner of pin 1); usb-a takes stack (ports stacked); chip takes pins (leads)." },
+        part: {
+            type: "string",
+            enum: PART_KINDS,
+            description:
+                "part: which component, built accurately so you never approximate it with blocks. Machine parts: bevel (a bevel gear, meshing with another at a right angle), blades (a ring of pitched blades on a hub: fans, compressors, turbines, propellers, impellers), " +
+                "lens (a glass element, bulge negative for concave), cam (a lobe that lifts its follower once per turn; bulge is its lift), " +
+                "rack (a toothed bar a pinion runs along), wheel (a rim on spokes: road wheels, pulleys, jockey wheels, flywheels), thread (a helical thread on a shaft: bolts, lead screws, worms, augers). " +
+                "bevel, blades, lens, cam and wheel turn about z like gear, radius across and height thick; rack runs along x and thread stands along y, length long. " +
+                "Electronic parts: header and socket take grid [columns, rows], order and first (the picture corner of pin 1); usb-a takes stack (ports stacked); chip takes pins (leads).",
+        },
         facing: { type: "string", enum: ["right", "left", "up", "down"], description: "part: the picture edge its opening faces (up is the top of the picture). Text on a base: the way it reads." },
         stack: { type: "integer", description: "usb-a: ports stacked on top of each other." },
         pins: { type: "boolean", description: "chip: show its leads." },
@@ -226,8 +236,8 @@ const SCENE_OBJECT = {
         },
         at: { ...point, description: "With on: its centre in the picture, in screenshot pixels." },
         footprint: { ...point, description: "With on: its width and height in the picture, in screenshot pixels." },
-        style: { type: "string", enum: ["round", "ribbon", "rod"], description: "wire: ribbon is a flat cable, such as a display or camera ribbon; rod is a straight rigid link." },
-        width: { type: "number", description: "wire: ribbon width." },
+        style: { type: "string", enum: ["round", "ribbon", "rod", "chain"], description: "wire: ribbon is a flat cable, such as a display or camera ribbon; rod is a straight rigid link. path: chain is a roller chain, drawn with closed true through the wheels it wraps, radius half its height and width across it." },
+        width: { type: "number", description: "wire: ribbon width. path: chain width." },
         curve: { type: "boolean" },
         closed: { type: "boolean" },
         text: { type: "string" },

@@ -2,8 +2,8 @@
 import { isRegion } from "./geometry.mjs";
 
 export const OBJECT_TYPES = ["box", "sphere", "cylinder", "cone", "torus", "capsule", "plane", "loft", "extrude", "lathe", "gear", "spring", "text", "arrow", "path", "wire", "group", "image", "base", "part"];
-// Ready-made components for type part; their shapes live in the overlay's parts.js.
-export const PART_KINDS = ["usb-a", "usb-b", "usb-c", "micro-usb", "hdmi", "micro-hdmi", "ethernet", "audio-jack", "barrel-jack", "microsd", "header", "socket", "ffc", "chip", "can", "capacitor", "smd", "crystal", "led", "button", "display"];
+// Ready-made components for type part; their shapes live in the overlay's parts.js and machines.js.
+export const PART_KINDS = ["usb-a", "usb-b", "usb-c", "micro-usb", "hdmi", "micro-hdmi", "ethernet", "audio-jack", "barrel-jack", "microsd", "header", "socket", "ffc", "chip", "can", "capacitor", "smd", "crystal", "led", "button", "display", "bevel", "blades", "lens", "cam", "rack", "wheel", "thread"];
 export const MATERIALS = ["metal", "chrome", "gold", "copper", "paint", "plastic", "rubber", "glass", "pcb", "screen", "matte"];
 export const SCENE_ACTIONS = ["show", "hide", "move", "rotate", "scale", "color", "opacity", "highlight", "spin", "flow", "camera", "label", "explode", "drive"];
 // Linked moving parts driven by one input that turns: a crank and slider, meshed or coupled rotations, and motions timed within each turn.

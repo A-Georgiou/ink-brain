@@ -4,10 +4,12 @@ import { anchorAt, pageState, pageTitle } from "../src/shared/anchors.mjs";
 import { clearSpot, validateBoard, withValues } from "../src/shared/board.mjs";
 import { inkGrid, inkIn, settleMarks } from "../src/shared/calm.mjs";
 import { compile } from "../src/shared/mathexpr.mjs";
-import { validateScene } from "../src/shared/scene.mjs";
+import { PART_KINDS, validateScene } from "../src/shared/scene.mjs";
 import { traceOutline } from "../src/shared/trace.mjs";
 import * as THREE from "three";
+import { buildPart } from "../src/overlay/parts.js";
 import { recentreRings } from "../src/overlay/repair.js";
+import { geometryFor } from "../src/overlay/shapes.js";
 import { bubbleSpot, cropAround, describeMarks, modelImageSize, overlapArea, shapeToOverlay, snapShape, stageSpot, validateShape } from "../src/shared/geometry.mjs";
 
 test("model screenshots are capped at the configured long edge", () => {
@@ -274,4 +276,35 @@ test("radial copies set on a wheel with no parent go round the wheel's axle, not
         assert.ok(Math.hypot(centre.x + 14, centre.y - 3) < 0.01 && Math.abs(centre.z - 10) < 0.01);
     }
     assert.deepEqual(items.get("spokes").home.position.toArray(), [-14, 3, 0]);
+});
+
+test("every ready-made part kind builds real geometry around its origin", () => {
+    const paint = ({ color }) => new THREE.MeshStandardMaterial({ color });
+    for (const kind of PART_KINDS) {
+        const obj = buildPart({ id: kind, type: "part", part: kind, grid: [2, 2] }, [2, 1, 2], paint);
+        const box = new THREE.Box3().setFromObject(obj);
+        const size = box.getSize(new THREE.Vector3());
+        assert.ok(size.x > 0.1 && size.y > 0.1 && size.z > 0.1, `${kind} is flat or empty: ${size.toArray()}`);
+        assert.ok(box.getCenter(new THREE.Vector3()).length() < 3, `${kind} is built away from its origin`);
+    }
+});
+
+test("a lens bulges out in the middle, and dishes in when its bulge is negative", () => {
+    const paint = ({ color }) => new THREE.MeshStandardMaterial({ color });
+    const thickness = (bulge, at) => {
+        const geometry = buildPart({ part: "lens", radius: 1, height: 0.3, bulge }, [2, 0.3, 2], paint).children[0].geometry;
+        const zs = [...Array(geometry.attributes.position.count).keys()]
+            .map((i) => [Math.hypot(geometry.attributes.position.getX(i), geometry.attributes.position.getY(i)), geometry.attributes.position.getZ(i)])
+            .filter(([r]) => Math.abs(r - at) < 0.08);
+        return Math.max(...zs.map(([, z]) => z)) - Math.min(...zs.map(([, z]) => z));
+    };
+    assert.ok(thickness(0.3, 0) > thickness(0.3, 0.95) * 2, "a convex lens should be thickest at its centre");
+    assert.ok(thickness(-0.3, 0) < thickness(-0.3, 0.95), "a concave lens should be thinnest at its centre");
+});
+
+test("a chain path wraps a band of rollers across the plane of its loop", () => {
+    const loop = { id: "chain", type: "path", style: "chain", closed: true, radius: 0.1, points: [[2, 0, 0], [0, 2, 0], [-2, 0, 0], [0, -2, 0]] };
+    const box = new THREE.Box3().setFromBufferAttribute(geometryFor(loop).attributes.position);
+    assert.ok(box.max.z - box.min.z > 0.2 && box.max.z - box.min.z < 0.5, "the chain's width runs along the axles it wraps");
+    assert.ok(geometryFor(loop).attributes.position.count > geometryFor({ ...loop, style: undefined }).attributes.position.count, "a chain carries rollers a plain tube does not");
 });

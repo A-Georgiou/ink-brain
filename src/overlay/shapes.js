@@ -2,6 +2,7 @@
 import * as THREE from "three";
 import { LoftGeometry } from "three/addons/geometries/LoftGeometry.js";
 import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
+import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 
 export const num = (value, fallback) => (Number.isFinite(value) ? value : fallback);
 export const isPoint = (p) => Array.isArray(p) && p.length === 3 && p.every(Number.isFinite);
@@ -14,8 +15,8 @@ export const sizeOf = (size, count, fallback) => {
 };
 const outline = (points) => (Array.isArray(points) ? points.filter(isFlat).map(([x, y]) => new THREE.Vector2(x, y)) : []);
 
-// A coil along y, for springs.
-class Helix extends THREE.Curve {
+// A coil along y, for springs and threads.
+export class Helix extends THREE.Curve {
     constructor(radius, height, coils) {
         super();
         Object.assign(this, { radius, height, coils });
@@ -146,6 +147,35 @@ function taperedTube(curve, points, radii, closed) {
     return new LoftGeometry(rings, { capStart: !closed, capEnd: !closed });
 }
 
+// The plane a loop lies in, so a chain keeps its width along the axles it wraps.
+function loopNormal(points) {
+    const normal = new THREE.Vector3();
+    for (let i = 0; i < points.length; i++) {
+        const [a, b] = [points[i], points[(i + 1) % points.length]];
+        normal.add(new THREE.Vector3((a.y - b.y) * (a.z + b.z), (a.z - b.z) * (a.x + b.x), (a.x - b.x) * (a.y + b.y)));
+    }
+    return normal.lengthSq() > 1e-9 ? normal.normalize() : new THREE.Vector3(0, 0, 1);
+}
+
+// A roller chain running along the curve: a flat band on the loop's plane, with a roller at each link.
+function chainGeometry(curve, points, { width, thick, closed }) {
+    const across = loopNormal(points);
+    const segments = Math.max(90, points.length * 24);
+    const rings = Array.from({ length: segments + 1 }, (_, i) => {
+        const t = Math.min(1, i / segments);
+        const [p, dir] = [curve.getPointAt(t), curve.getTangentAt(t)];
+        const side = new THREE.Vector3().crossVectors(across, dir).normalize();
+        return [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([a, b]) => p.clone().addScaledVector(across, (a * width) / 2).addScaledVector(side, (b * thick) / 2));
+    });
+    const parts = [new LoftGeometry(rings, { capStart: !closed, capEnd: !closed })];
+    const count = Math.max(6, Math.min(160, Math.round(curve.getLength() / (thick * 1.35))));
+    const roller = new THREE.CylinderGeometry(thick * 0.46, thick * 0.46, width * 1.5, 12).rotateX(Math.PI / 2);
+    const turn = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), across);
+    const one = new THREE.Vector3(1, 1, 1);
+    for (let i = 0; i < count; i++) parts.push(baked(roller, new THREE.Matrix4().compose(curve.getPointAt((i / count) % 1), turn, one)));
+    return mergeGeometries(parts.map((g) => baked(g, new THREE.Matrix4())));
+}
+
 // Geometry for a plain shape object; null for types built otherwise.
 export function geometryFor(def) {
     switch (def.type) {
@@ -195,7 +225,12 @@ export function geometryFor(def) {
             if (def.curve === false) {
                 curve = new THREE.CurvePath();
                 for (let i = 1; i < points.length; i++) curve.add(new THREE.LineCurve3(points[i - 1], points[i]));
+                if (def.closed) curve.add(new THREE.LineCurve3(points.at(-1), points[0]));
             } else curve = new THREE.CatmullRomCurve3(points, Boolean(def.closed), "centripetal");
+            if (def.style === "chain") {
+                const thick = Math.max(0.0005, num(def.radius, 0.1)) * 2;
+                return chainGeometry(curve, points, { width: Math.max(0.0005, num(def.width, thick * 0.85)), thick, closed: Boolean(def.closed) });
+            }
             const radii = Array.isArray(def.radii) ? def.radii.filter((r) => Number.isFinite(r) && r >= 0) : [];
             if (radii.length >= 2) return taperedTube(curve, points, radii, Boolean(def.closed));
             return new THREE.TubeGeometry(curve, Math.max(48, points.length * 24), num(def.radius, 0.035), 12, Boolean(def.closed));

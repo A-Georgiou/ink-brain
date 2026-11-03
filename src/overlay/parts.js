@@ -1,6 +1,7 @@
 // Ready-made electronic parts for scenes, modelled from simple shapes with real finishes.
 import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
+import { MACHINE_KINDS, buildMachine } from "./machines.js";
 
 const METAL = { color: "#9ea5ad", metalness: 1, roughness: 0.32 };
 const PLASTIC = { color: "#1b1d22", metalness: 0.05, roughness: 0.55 };
@@ -223,6 +224,7 @@ const BUILD = {
 // Builds def.part on an fw by fd footprint, tall or of usual height; userData: port, portDir, copies.
 export function buildPart(def, [fw, tall, fd], paint) {
     const kind = def.part;
+    if (MACHINE_KINDS.includes(kind)) return buildMachine(def, [fw, tall, fd], paint);
     const facing = FRONT.has(kind) ? (ANGLE[def.facing] === undefined ? "right" : def.facing) : null;
     const turned = facing ? facing === "up" || facing === "down" : LONG[kind] === "x" ? fd > fw : LONG[kind] === "z" ? fw > fd : false;
     const [len, wid] = turned ? [fd, fw] : [fw, fd];
