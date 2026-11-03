@@ -1163,7 +1163,7 @@ async function runTurn({ text, marks }) {
         turn.front = app;
         prepareElements(app);
         const { remembered, recent } = memoryContext(brain, app);
-        const prompt = buildTurnPrompt({ text, marks, geometry, cursor: cursorInDisplay(), front: app, heard: recentHeard(), crop: shot.crop, linked: brain !== embedded, turnId: turn.key, remembered, recent });
+        const prompt = buildTurnPrompt({ text, marks, geometry, cursor: cursorInDisplay(), front: app, heard: recentHeard(), crop: shot.crop, linked: brain !== embedded, turnId: turn.key, remembered, recent, onScreen: surface.onScreen() });
         const attachments = shot.images.map((image, index) => ({ type: "blob", data: image.data, mimeType: image.mimeType, displayName: index ? "zoom.jpg" : "screen.jpg" }));
         turn.sentAt = Date.now();
         if (DEBUG) console.log(`[turn ${turn.id}] screen captured and sent after ${turn.sentAt - turn.startedAt} ms`);

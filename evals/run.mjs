@@ -236,7 +236,7 @@ async function play(scenario, dir, { reader, client, replay = null }) {
             const shot = marks.length ? await stage.call("compose", { image: screen, marks, crop: zoom, modelWidth: SCREEN.width, modelHeight: SCREEN.height }, 15_000) : { full: jpeg.toString("base64"), crop: null };
             if (!index) fs.writeFileSync(path.join(dir, "00-screen.jpg"), Buffer.from(shot.full, "base64"));
             const end = marks.at(-1)?.points.at(-1);
-            const prompt = buildTurnPrompt({ text: spec.ask, marks, geometry: GEOMETRY, cursor: end && { x: end[0], y: end[1] }, front: { app: "Google Chrome", title: meta.title }, crop: zoom, turnId: String(turnNo) });
+            const prompt = buildTurnPrompt({ text: spec.ask, marks, geometry: GEOMETRY, cursor: end && { x: end[0], y: end[1] }, front: { app: "Google Chrome", title: meta.title }, crop: zoom, turnId: String(turnNo), onScreen: surface.onScreen() });
             const attachments = [shot.full, shot.crop].filter(Boolean).map((data, i) => ({ type: "blob", data, mimeType: "image/jpeg", displayName: i ? "zoom.jpg" : "screen.jpg" }));
             turn = { ask: spec.ask, marked: Boolean(marks.length), at: index ? elapsed() : 0, text: "", captions: [], tools: [], firstWords: null, firstVisual: null, error: null };
             if (many) record.turns.push(turn);

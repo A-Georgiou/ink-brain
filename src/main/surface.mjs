@@ -33,6 +33,7 @@ function texProblem(board, steps) {
 
 export class Surface {
     #panelCount = 0;
+    #shown = new Map();
 
     // Tool handlers take (args, origin) and memory (name, args, origin); image readers return data URLs; snap(shapes) may move marks onto real controls.
     constructor({ overlayCall, look, say, geometry, config, regionImage, readImage, explain, cutout, image, control, read, memory, askCheck = null, snap = null }) {
@@ -201,13 +202,21 @@ export class Surface {
         if (!result?.ok) {
             return { text: `The ${kind} panel "${id}" failed to render: ${result?.error ?? "unknown error"}. Fix it and call live_panel again with id "${id}".`, failed: true, id };
         }
+        this.#shown.set(id, { kind, title });
         return { text: `Showing the ${kind} panel "${id}"${over ? " over the region" : ""} on the user's screen.`, id };
+    }
+
+    // What of its own is still on the user's screen, so a later turn can carry on with it instead of opening another.
+    onScreen() {
+        return [...this.#shown].map(([id, panel]) => ({ id, ...panel }));
     }
 
     async #clear(args) {
         const target = ["annotations", "panels", "all"].includes(args.target) ? args.target : "all";
         const id = cleanId(args.id) || undefined;
         await this.overlayCall("clear", { target, id, scope: id ? undefined : "visible" });
+        if (id) this.#shown.delete(id);
+        else if (target !== "annotations") this.#shown.clear();
         return { text: args.id ? `Removed "${args.id}".` : `Cleared ${target === "all" ? "drawings and panels" : target} from the page the user is looking at.` };
     }
 

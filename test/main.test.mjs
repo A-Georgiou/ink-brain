@@ -158,3 +158,17 @@ test("screen history counts time per page, leaving out idle time and password ma
     assert.equal(memory.recentScreen({ app: "Code", page: "main.mjs" }), 'Also on their screen in the last 30 minutes: Google Chrome "Reddit" (1 min).');
     fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test("later turns are told what Ink Brain still has on screen, until it clears it", async () => {
+    const { surface } = surfaceWith({ ok: true });
+    await surface.execute("live_panel", { kind: "markdown", id: "notes", title: "Rain", content: "hi" });
+    await surface.execute("live_panel", { kind: "mermaid", id: "flow", content: "graph TD; A-->B" });
+    assert.deepEqual(surface.onScreen(), [{ id: "notes", kind: "markdown", title: "Rain" }, { id: "flow", kind: "mermaid", title: "" }]);
+    const prompt = buildTurnPrompt({ text: "and the other one?", geometry, onScreen: surface.onScreen() });
+    assert.match(prompt, /Still on their screen from earlier \(hidden from the screenshot\): markdown "notes" titled "Rain", mermaid "flow"\./);
+    await surface.execute("live_clear", { id: "notes" });
+    assert.deepEqual(surface.onScreen(), [{ id: "flow", kind: "mermaid", title: "" }]);
+    await surface.execute("live_clear", {});
+    assert.deepEqual(surface.onScreen(), []);
+    assert.doesNotMatch(buildTurnPrompt({ text: "next", geometry, onScreen: surface.onScreen() }), /Still on their screen/);
+});
