@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { anchorAt, pageState, pageTitle } from "../src/shared/anchors.mjs";
-import { clearSpot, validateBoard } from "../src/shared/board.mjs";
+import { clearSpot, validateBoard, withValues } from "../src/shared/board.mjs";
 import { compile } from "../src/shared/mathexpr.mjs";
 import { validateScene } from "../src/shared/scene.mjs";
 import { traceOutline } from "../src/shared/trace.mjs";
@@ -137,8 +137,19 @@ test("board expressions compile without eval and say what is wrong", () => {
 });
 
 test("boards check their equations' parts, plots and variables", () => {
-    const board = { vars: { a: 1 }, elements: [{ id: "eq", type: "tex", tex: "\\part{lhs}{a^2} = b" }, { id: "ax", type: "axes" }, { id: "f", type: "plot", on: "ax", fn: "a*x^2" }, { id: "t", type: "tangent", on: "f", x: "a" }] };
+    const board = {
+        vars: { a: 1, h: -0.01 },
+        elements: [
+            { id: "eq", type: "tex", tex: "\\part{lhs}{a^2} = b" },
+            { id: "ax", type: "axes" },
+            { id: "f", type: "plot", on: "ax", fn: "a*x^2" },
+            { id: "t", type: "tangent", on: "f", x: "a" },
+            { id: "c", type: "circle", on: "ax", at: [0, 0], r: "a" },
+            { id: "v", type: "vector", on: "ax", at: ["a", 0] },
+        ],
+    };
     assert.equal(validateBoard(board, [[{ do: "highlight", target: "eq.lhs" }, { do: "set", vars: { a: 2 } }]]), null);
+    assert.equal(withValues("2 + \\val{h} = \\val{2+h}", board.vars), "2 - 0.01 = 1.99");
     assert.match(validateBoard(board, [[{ do: "color", target: "eq.rhs" }]]), /"eq" has no \\part\{rhs\}/);
     assert.match(validateBoard({ elements: [{ id: "f", type: "plot", fn: "x" }] }), /plot "f" needs on/);
     assert.match(validateBoard(board, [[{ do: "set", vars: { b: 2 } }]]), /set b: declare it in the board's vars/);

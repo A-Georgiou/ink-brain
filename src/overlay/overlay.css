@@ -923,6 +923,7 @@ body:not(.speaking):not(.thinking) .bubble-stop {
     left: 50%;
     bottom: 54px;
     translate: -50% 0;
+    width: max-content;
     max-width: min(860px, 80vw);
     padding: 10px 20px 12px;
     border-radius: 18px;

@@ -8,17 +8,30 @@ const TEX_MACROS = { "\\part": "\\htmlClass{p-#1}{#2}", "\\val": "\\htmlClass{v-
 
 export const katexOptions = () => ({ macros: { ...TEX_MACROS }, trust: (context) => context.command === "\\htmlClass", strict: "ignore", throwOnError: true, output: "html" });
 
-const formatted = (value) => (Number.isInteger(value) ? String(value) : value.toFixed(Math.abs(value) < 10 ? 2 : 1));
-// Puts the current value of each variable in place of \val{name}; names in whole show rounded.
-export const withValues = (source, vars, whole = new Set()) =>
-    String(source).replace(/\\val\{(\w+)\}/g, (all, name) => (Number.isFinite(vars[name]) ? formatted(whole.has(name) ? Math.round(vars[name]) : vars[name]) : all));
+const formatted = (value) => (Math.abs(value - Math.round(value)) < 1e-9 ? String(Math.round(value)) : value.toFixed(Math.abs(value) < 10 ? 2 : 1));
+// Puts the current value of each variable or expression in place of \val{...}; names in whole show rounded.
+export const withValues = (source, vars = {}, whole = new Set()) => {
+    const names = Object.keys(vars);
+    const out = String(source).replace(/\\val\{([^{}]+)\}/g, (all, expr) => {
+        const key = expr.trim();
+        if (Number.isFinite(vars[key])) return formatted(whole.has(key) ? Math.round(vars[key]) : vars[key]);
+        if (!names.length) return all;
+        try {
+            const v = compile(key, names)(vars);
+            return Number.isFinite(v) ? formatted(v) : all;
+        } catch {
+            return all;
+        }
+    });
+    return /\\val\{/.test(source) ? out.replace(/\+\s*-(\d)/g, "- $1").replace(/-\s*-(\d)/g, "+ $1") : out;
+};
 
 export const texParts = (tex) => [...String(tex ?? "").matchAll(/\\part\{([\w-]+)\}/g)].map((match) => match[1]);
 
 const ID = /^[\w-]+$/;
 const isPair = (p) => Array.isArray(p) && p.length === 2;
 // Where each type may sit (its coordinates become that axes' maths coordinates), and which types must.
-const ON = { plot: ["axes"], area: ["axes", "plot"], dot: ["axes", "plot"], vector: ["axes"], tangent: ["plot"], path: ["axes"], line: ["axes"], arrow: ["axes"] };
+const ON = { plot: ["axes"], area: ["axes", "plot"], dot: ["axes", "plot"], vector: ["axes"], tangent: ["plot"], path: ["axes"], line: ["axes"], arrow: ["axes"], circle: ["axes"], box: ["axes"], tex: ["axes"], text: ["axes"], brace: ["axes"] };
 const MUST_SIT = new Set(["plot", "area", "tangent"]);
 const NEEDS = {
     tex: (e) => (typeof e.tex === "string" && e.tex.trim() !== "") || "needs tex",
@@ -30,7 +43,7 @@ const NEEDS = {
     area: (e) => isPair(e.domain) || "needs domain [from, to]",
     dot: (e) => isPair(e.at) || (e.on !== undefined && e.x !== undefined) || "needs at: [x, y], or to be on a plot with x",
     tangent: (e) => e.x !== undefined || "needs x, where along the plot it touches",
-    vector: (e) => isPair(e.to) || "needs to: [x, y]",
+    vector: (e) => isPair(e.to) || isPair(e.at) || "needs to: [x, y]",
     line: (e) => (e.from !== undefined && e.to !== undefined) || "needs from and to",
     arrow: (e) => (e.from !== undefined && e.to !== undefined) || "needs from and to",
     brace: (e) => typeof e.of === "string" || (isPair(e.from) && isPair(e.to)) || "needs of (an element or part) or from and to",
@@ -43,6 +56,9 @@ function expressionsOf(element, vars, ids) {
     add(element.fn, ["x", ...vars]);
     if (element.type === "area" && !ids.has(element.lower)) add(element.lower, ["x", ...vars]);
     add(element.x);
+    add(element.r);
+    add(element.width);
+    add(element.height);
     add(element.bars);
     for (const pair of [element.at, element.from, element.to, element.domain]) if (isPair(pair)) pair.forEach((value) => add(value));
     if (element.type === "path" && Array.isArray(element.points)) for (const p of element.points) if (isPair(p)) p.forEach((value) => add(value));

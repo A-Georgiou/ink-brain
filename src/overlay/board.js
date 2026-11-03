@@ -18,7 +18,7 @@ const STYLE = `
 .board-world,.board-cam,.board-html{position:absolute;left:0;top:0;width:${W}px;height:${H}px;transform-origin:0 0}
 .board svg{position:absolute;left:0;top:0;overflow:visible}
 .board-html{pointer-events:none}
-.board-html>div{position:absolute;white-space:nowrap;color:#ECECEC;line-height:1.25;transform-origin:center}
+.board-html>div{position:absolute;white-space:nowrap;color:#ECECEC;line-height:1.25;transform-origin:center;text-shadow:0 0 6px #0d1117,0 0 12px #0d1117,0 1px 3px #0d1117}
 .board-html .katex{font-size:1em}
 .board-text{font-family:KaTeX_Main,"Times New Roman",serif}
 .board-text.sans{font-family:-apple-system,system-ui,sans-serif}
@@ -173,7 +173,7 @@ function build(spec, world, katex) {
         if (part) return rectOf(partNodes(item, part));
         let box = rectOf(item.nodes);
         const [ox, oy] = shift(item);
-        for (const node of item.g.querySelectorAll("path, circle, rect, text")) {
+        for (const node of item.g.querySelectorAll("path, circle, ellipse, rect, text")) {
             const b = node.getBBox();
             if (b.width || b.height) box = union(box, { x: b.x + ox, y: b.y + oy, w: b.width, h: b.height });
         }
@@ -200,7 +200,7 @@ function build(spec, world, katex) {
         let node = item.labels[key];
         if (!node) {
             node = item.labels[key] = element("div", "board-tex", layer);
-            node.style.fontSize = `${num(item.def.size, 0.42) * UNIT}px`;
+            node.style.fontSize = `${num(item.def.size, 0.45) * UNIT}px`;
             node.style.color = item.textColor ?? item.color;
             item.nodes.push(node);
         }
@@ -229,13 +229,21 @@ function build(spec, world, katex) {
         const room = W - 2 * BOARD_MARGIN - (item.def.type === "box" ? 56 : 0);
         if (node.offsetWidth > room) node.style.fontSize = `${parseFloat(node.style.fontSize) * Math.max(0.5, room / node.offsetWidth)}px`;
     };
-    // A box is never smaller than its text, whatever size it was given.
+    // A box is never smaller than its text, and shrinks its text to fit when an explicit width is given.
     const sizeBox = (item) => {
-        const [cx, cy] = atOf(item.def);
-        const w = Math.max(num(item.def.width, 0) * UNIT, item.node ? item.node.offsetWidth + 56 : 240);
-        const h = Math.max(num(item.def.height, 0) * UNIT, item.node ? item.node.offsetHeight + 40 : 110);
-        const attrs = { x: cx - w / 2, y: cy - h / 2, width: w, height: h, rx: Math.min(18, h / 4) };
+        const axes = axesOf(item);
+        const [cx, cy] = axes ? pointOf(item, item.def.at ?? [0, 0]) : atOf(item.def);
+        const [sx, sy] = axes ? axes.scale : [UNIT, UNIT];
+        const givenW = item.def.width !== undefined ? Math.abs(value(item.def.width)) * sx : 0;
+        const givenH = item.def.height !== undefined ? Math.abs(value(item.def.height)) * sy : 0;
+        if (item.node && givenW > 24 && item.node.offsetWidth > givenW - 16) {
+            item.node.style.fontSize = `${parseFloat(item.node.style.fontSize) * Math.max(0.45, (givenW - 16) / item.node.offsetWidth)}px`;
+        }
+        const w = givenW > 0 ? Math.max(givenW, item.node ? item.node.offsetWidth + 16 : 20) : Math.max(0, item.node ? item.node.offsetWidth + 56 : 240);
+        const h = givenH > 0 ? Math.max(givenH, item.node ? item.node.offsetHeight + 14 : 20) : Math.max(0, item.node ? item.node.offsetHeight + 40 : 110);
+        const attrs = { x: cx - w / 2, y: cy - h / 2, width: w, height: h, rx: axes ? Math.min(8, w / 6, h / 6) : Math.min(18, h / 4) };
         for (const [key, v] of Object.entries(attrs)) item.rect.setAttribute(key, v);
+        if (item.node) Object.assign(item.node.style, { left: `${cx}px`, top: `${cy}px` });
     };
     // An item's function of x: its own, else the plot it is on, else its fn expression.
     const fnOf = (item) => item.fn ?? items.get(item.def.on)?.fn ?? ((x) => value(item.def.fn, x));
@@ -243,10 +251,11 @@ function build(spec, world, katex) {
         const node = item.node;
         if (node && /\\val\{/.test(node.dataset.source) && node.dataset.shown !== live(node.dataset.source)) (item.def.type === "text" ? setText : setTex)(node, node.dataset.source);
     };
-    // Text and boxes placed by expressions of vars follow them as set animates the vars.
+    // Text and boxes placed by expressions of vars or sitting on axes follow them as set or apply animates.
     const follow = (item) => {
-        if (!item.node || !Array.isArray(item.def.at) || !item.def.at.some((v) => typeof v === "string")) return;
-        const [x, y] = TEXT_TYPES.has(item.def.type) ? pointOf(item, item.def.at) : atOf(item.def);
+        if (item.def.type === "box" && (axesOf(item) || [item.def.at, [item.def.width, item.def.height]].flat().some((v) => typeof v === "string"))) return sizeBox(item);
+        if (!item.node || (!axesOf(item) && (!Array.isArray(item.def.at) || !item.def.at.some((v) => typeof v === "string")))) return;
+        const [x, y] = TEXT_TYPES.has(item.def.type) ? pointOf(item, item.def.at ?? [0, 0]) : atOf(item.def);
         Object.assign(item.node.style, { left: `${x}px`, top: `${y}px` });
         if (item.def.type === "box") sizeBox(item);
     };
@@ -281,7 +290,8 @@ function build(spec, world, katex) {
         }
         const side = bend < 0 ? -1 : 1;
         const spot = [(a[0] + b[0]) / 2 + normal[0] * (bend / 2 + side * 34), (a[1] + b[1]) / 2 + normal[1] * (bend / 2 + side * 34)];
-        label(item, "label", item.def.label, isPair(item.def.to) && item.def.type === "vector" ? [b[0] + dir[0] * 30, b[1] + dir[1] * 30] : spot);
+        const vecEnd = item.def.to ?? item.def.at;
+        label(item, "label", item.def.label, free(isPair(vecEnd) && item.def.type === "vector" ? [b[0] + dir[0] * 26 + normal[0] * 22, b[1] + dir[1] * 26 + normal[1] * 22] : spot));
     };
 
     const BUILD = {
@@ -289,20 +299,27 @@ function build(spec, world, katex) {
             item.node = textNode(item, item.def.tex, true, num(item.def.size, 0.6));
         },
         text(item) {
-            item.node = textNode(item, item.def.text, false, num(item.def.size, 0.42));
+            item.node = textNode(item, item.def.text, false, num(item.def.size, 0.44));
         },
         box(item) {
             const content = item.def.tex ?? item.def.text;
             item.textColor = paint(item.def.text_color, "#ECECEC");
-            if (typeof content === "string") item.node = textNode(item, content, typeof item.def.tex === "string", num(item.def.size, 0.36));
+            if (typeof content === "string") item.node = textNode(item, content, typeof item.def.tex === "string", num(item.def.size, typeof item.def.tex === "string" ? 0.48 : 0.42));
             const fill = item.def.fill === false ? 0 : 0.14;
             item.rect = stroke(item, "rect", { fill: "currentColor", "fill-opacity": fill, "data-fill": fill });
             sizeBox(item);
         },
         circle(item) {
-            const [cx, cy] = pointOf(item, item.def.at ?? [0, 0]);
             const fill = item.def.fill ? 0.25 : 0;
-            stroke(item, "circle", { cx, cy, r: num(item.def.r, 1) * UNIT, fill: "currentColor", "fill-opacity": fill, "data-fill": fill });
+            item.ellipse = stroke(item, "ellipse", { fill: "currentColor", "fill-opacity": fill, "data-fill": fill });
+            item.draw = () => {
+                const [cx, cy] = pointOf(item, item.def.at ?? [0, 0]);
+                const r = Math.max(0, value(item.def.r ?? 1));
+                const axes = axesOf(item);
+                const [rx, ry] = axes ? [r * axes.scale[0], r * axes.scale[1]] : [r * UNIT, r * UNIT];
+                for (const [k, v] of Object.entries({ cx, cy, rx, ry })) item.ellipse.setAttribute(k, v);
+                if (item.def.label) label(item, "label", item.def.label, free([cx + rx + 16, cy - 16]), "translate(0, -50%)");
+            };
         },
         line(item) {
             item.path = stroke(item, "path");
@@ -315,12 +332,13 @@ function build(spec, world, katex) {
         },
         vector(item) {
             BUILD.arrow(item);
-            item.draw = () => drawLink(item, item.def.from ?? [0, 0], item.def.to, true);
+            item.draw = () => drawLink(item, item.def.from ?? [0, 0], item.def.to ?? item.def.at, true);
         },
         path(item) {
             const fill = item.def.fill ? 0.22 : 0;
             item.path = stroke(item, "path", { fill: "currentColor", "fill-opacity": fill, "data-fill": fill });
-            item.draw = () => item.path.setAttribute("d", through(item.def.points.map((p) => pointOf(item, p)), item.def.curve !== false, Boolean(item.def.closed)));
+            const curved = item.def.curve ?? !item.def.closed;
+            item.draw = () => item.path.setAttribute("d", through(item.def.points.map((p) => pointOf(item, p)), curved, Boolean(item.def.closed)));
         },
         brace(item) {
             item.path = stroke(item, "path");
@@ -357,15 +375,17 @@ function build(spec, world, katex) {
             const [w, h] = [num(d.width, 8) * UNIT, num(d.height, 5) * UNIT];
             const [cx, cy] = atOf(d);
             item.range = { x0, x1, y0, y1 };
+            item.scale = [w / (x1 - x0), h / (y1 - y0)];
             item.matrix = [1, 0, 0, 1];
+            const baseMap = ([mx, my]) => [cx - w / 2 + ((mx - x0) / (x1 - x0)) * w, cy + h / 2 - ((my - y0) / (y1 - y0)) * h];
             item.map = ([mx, my]) => {
                 const [a, b, c, e] = item.matrix;
-                const [ux, uy] = [a * mx + b * my, c * mx + e * my];
-                return [cx - w / 2 + ((ux - x0) / (x1 - x0)) * w, cy + h / 2 - ((uy - y0) / (y1 - y0)) * h];
+                return baseMap([a * mx + b * my, c * mx + e * my]);
             };
             const clip = svgNode("clipPath", { id: `clip-${d.id}` }, defs);
             svgNode("rect", { x: cx - w / 2 - 8, y: cy - h / 2 - 8, width: w + 16, height: h + 16 }, clip);
-            const grid = d.grid ? svgNode("path", { stroke: "#58C4DD", "stroke-opacity": 0.32, "stroke-width": 2, fill: "none", pathLength: 1, "clip-path": `url(#clip-${d.id})` }, item.g) : null;
+            const refGrid = d.grid ? svgNode("path", { stroke: "#888888", "stroke-opacity": 0.16, "stroke-width": 1.5, fill: "none", "clip-path": `url(#clip-${d.id})` }, item.g) : null;
+            const grid = d.grid ? svgNode("path", { stroke: "#58C4DD", "stroke-opacity": 0.34, "stroke-width": 2, fill: "none", pathLength: 1, "clip-path": `url(#clip-${d.id})` }, item.g) : null;
             item.width = 3.5;
             const axis = stroke(item, "path");
             const ticks = stroke(item, "path", { "stroke-width": 2.5 });
@@ -376,36 +396,44 @@ function build(spec, world, katex) {
                 return list;
             };
             const numbers = d.numbers === false ? [] : [...marks(x0, x1, xs).map((v) => ["x", v]), ...marks(y0, y1, ys).map((v) => ["y", v])];
-            const texts = numbers.map(([, v]) => Object.assign(svgNode("text", { "font-size": 30, "font-family": "KaTeX_Main, serif", fill: "#B8C0CC", class: "fade" }, item.g), { textContent: String(v).replace("-", "\u2212") }));
+            const texts = numbers.map(([, v]) =>
+                Object.assign(svgNode("text", { "font-size": 34, "font-family": "KaTeX_Main, serif", fill: "#C9D1D9", stroke: "#0d1117", "stroke-width": 7, "stroke-linejoin": "round", "paint-order": "stroke", class: "fade" }, item.g), {
+                    textContent: String(v).replace("-", "\u2212"),
+                }),
+            );
             item.draw = () => {
                 const [ax, ay] = [x0 <= 0 && x1 >= 0 ? 0 : x0, y0 <= 0 && y1 >= 0 ? 0 : y0];
-                const line = (p, q) => `M${item.map(p).join(",")}L${item.map(q).join(",")}`;
+                const line = (p, q, map = item.map) => `M${map(p).join(",")}L${map(q).join(",")}`;
                 if (grid) {
                     const [sx, sy] = [x1 - x0, y1 - y0];
-                    const rows = [...marks(x0 - sx, x1 + sx, xs).map((v) => line([v, y0 - sy], [v, y1 + sy])), ...marks(y0 - sy, y1 + sy, ys).map((v) => line([x0 - sx, v], [x1 + sx, v]))];
-                    grid.setAttribute("d", `${line([0, y0 - sy], [0, y1 + sy])}${line([x0 - sx, 0], [x1 + sx, 0])}${rows.join("")}`);
+                    const gridPath = (map) => {
+                        const rows = [...marks(x0 - sx, x1 + sx, xs).map((v) => line([v, y0 - sy], [v, y1 + sy], map)), ...marks(y0 - sy, y1 + sy, ys).map((v) => line([x0 - sx, v], [x1 + sx, v], map))];
+                        return `${line([0, y0 - sy], [0, y1 + sy], map)}${line([x0 - sx, 0], [x1 + sx, 0], map)}${rows.join("")}`;
+                    };
+                    refGrid.setAttribute("d", gridPath(baseMap));
+                    grid.setAttribute("d", gridPath(item.map));
                 }
-                axis.setAttribute("d", `${line([x0, ay], [x1, ay])}${line([ax, y0], [ax, y1])}`);
+                axis.setAttribute("d", `${line([x0, ay], [x1, ay], baseMap)}${line([ax, y0], [ax, y1], baseMap)}`);
                 const tipAt = (from, to) => {
-                    const [p, q] = [item.map(from), item.map(to)];
+                    const [p, q] = [baseMap(from), baseMap(to)];
                     const dir = unit([q[0] - p[0], q[1] - p[1]]);
                     return `M${q[0] + dir[0] * 16},${q[1] + dir[1] * 16}L${q[0] - dir[1] * 9},${q[1] + dir[0] * 9}L${q[0] + dir[1] * 9},${q[1] - dir[0] * 9}Z`;
                 };
                 tips.setAttribute("d", `${tipAt([x0, ay], [x1, ay])}${tipAt([ax, y0], [ax, y1])}`);
                 const tick = (p, along) => {
-                    const [q, r] = [item.map(p), item.map([p[0] + along[0], p[1] + along[1]])];
+                    const [q, r] = [baseMap(p), baseMap([p[0] + along[0], p[1] + along[1]])];
                     const n = unit([r[1] - q[1], q[0] - r[0]]);
                     return `M${q[0] - n[0] * 8},${q[1] - n[1] * 8}L${q[0] + n[0] * 8},${q[1] + n[1] * 8}`;
                 };
                 ticks.setAttribute("d", [...marks(x0, x1, xs).map((v) => tick([v, ay], [1, 0])), ...marks(y0, y1, ys).map((v) => tick([ax, v], [0, 1]))].join(""));
                 numbers.forEach(([axisName, v], i) => {
-                    const [x, y] = item.map(axisName === "x" ? [v, ay] : [ax, v]);
-                    const [dx, dy, anchor] = axisName === "x" ? [0, 34, "middle"] : [-16, 8, "end"];
+                    const [x, y] = baseMap(axisName === "x" ? [v, ay] : [ax, v]);
+                    const [dx, dy, anchor] = axisName === "x" ? [0, 36, "middle"] : [-16, 10, "end"];
                     Object.entries({ x: x + dx, y: y + dy, "text-anchor": anchor }).forEach(([key, val]) => texts[i].setAttribute(key, val));
                 });
                 const [xl, yl] = Array.isArray(d.labels) ? d.labels : [];
-                const xe = item.map([x1, ay]);
-                const ye = item.map([ax, y1]);
+                const xe = baseMap([x1, ay]);
+                const ye = baseMap([ax, y1]);
                 label(item, "x", xl, [xe[0] + 16, xe[1] + 22], "translate(-100%, 0)");
                 label(item, "y", yl, [ye[0], ye[1] - 30], "translate(-50%, -100%)");
             };
@@ -475,7 +503,7 @@ function build(spec, world, katex) {
         },
         tangent(item) {
             item.path = stroke(item, "path");
-            item.circle = solid(item, "circle", { r: 9 });
+            item.circle = solid(item, "circle", { r: 5 });
             item.draw = () => {
                 const plot = items.get(item.def.on);
                 const axes = axesOf(item);
@@ -490,7 +518,7 @@ function build(spec, world, katex) {
                 item.path.setAttribute("d", `M${p[0] - dir[0] * half},${p[1] - dir[1] * half}L${p[0] + dir[0] * half},${p[1] + dir[1] * half}`);
                 item.circle.setAttribute("cx", p[0]);
                 item.circle.setAttribute("cy", p[1]);
-                label(item, "label", item.def.label, [p[0] + dir[0] * half + 12, p[1] + dir[1] * half - 12], "translate(0, -100%)");
+                label(item, "label", item.def.label, free([p[0] + dir[0] * half + 12, p[1] + dir[1] * half - 12]), "translate(0, -100%)");
             };
         },
     };
@@ -657,16 +685,21 @@ function build(spec, world, katex) {
     }
 
     function move(item, action, duration, delay) {
-        const from = [...item.offset];
-        let to;
-        if (isPair(action.by)) to = [from[0] + value(action.by[0]) * UNIT, from[1] - value(action.by[1]) * UNIT];
-        else {
-            const box = boxOf(item.def.id);
-            const [cx, cy] = box ? centre({ ...box, x: box.x - item.nudge[0], y: box.y - item.nudge[1] }) : [W / 2, H / 2];
-            const [tx, ty] = px([value(action.to[0]), value(action.to[1])]);
-            to = [from[0] + tx - cx, from[1] + ty - cy];
-        }
-        tween(duration, delay, (k) => (item.offset = [lerp(from[0], to[0], smooth(k)), lerp(from[1], to[1], smooth(k))]));
+        let from = null;
+        let to = null;
+        tween(duration, delay, (k) => {
+            if (!from) {
+                from = [...item.offset];
+                if (isPair(action.by)) to = [from[0] + value(action.by[0]) * UNIT, from[1] - value(action.by[1]) * UNIT];
+                else {
+                    const box = boxOf(item.def.id);
+                    const [cx, cy] = box ? centre({ ...box, x: box.x - item.nudge[0], y: box.y - item.nudge[1] }) : [W / 2, H / 2];
+                    const [tx, ty] = px([value(action.to[0]), value(action.to[1])]);
+                    to = [from[0] + tx - cx, from[1] + ty - cy];
+                }
+            }
+            item.offset = [lerp(from[0], to[0], smooth(k)), lerp(from[1], to[1], smooth(k))];
+        });
     }
 
     // Like TransformMatchingTex: matching parts and symbols glide as ghosts, keeping KaTeX's layout intact.
@@ -764,9 +797,10 @@ function build(spec, world, katex) {
             return;
         }
         if (["plot", "area"].includes(item.def.type)) {
-            const before = fnOf(item);
             const after = (x) => value(to, x);
+            let before = null;
             tween(duration, delay, (k) => {
+                before ??= fnOf(item);
                 const e = smooth(k);
                 item.fn = k < 1 ? (x) => lerp(before(x), after(x), e) : after;
             });
@@ -817,8 +851,9 @@ function build(spec, world, katex) {
             to = px([value(action.to[0]), value(action.to[1])]);
             z = num(action.value, 1.6);
         }
-        const from = { ...camera };
+        let from = null;
         tween(duration, delay, (k) => {
+            from ??= { ...camera };
             const e = smooth(k);
             Object.assign(camera, { x: lerp(from.x, to[0], e), y: lerp(from.y, to[1], e), z: lerp(from.z, z, e) });
         });
@@ -828,9 +863,12 @@ function build(spec, world, katex) {
         const duration = instant ? 0 : Math.min(10, Math.max(0.05, num(action.duration, TIME[action.do] ?? 1)));
         const delay = instant ? 0 : Math.min(10, Math.max(0, num(action.delay, 0)));
         if (action.do === "set") {
-            const from = { ...vars };
             const to = action.vars ?? {};
-            return tween(duration, delay, (k) => Object.keys(to).forEach((name) => Number.isFinite(to[name]) && (vars[name] = lerp(from[name] ?? 0, to[name], smooth(k)))));
+            let from = null;
+            return tween(duration, delay, (k) => {
+                from ??= { ...vars };
+                for (const name of Object.keys(to)) if (Number.isFinite(to[name])) vars[name] = lerp(from[name] ?? 0, to[name], smooth(k));
+            });
         }
         if (action.do === "camera") return aim(action, duration, delay);
         if (action.do === "flow") return flow(action, delay);
@@ -853,14 +891,20 @@ function build(spec, world, katex) {
             else if (action.do === "opacity") {
                 if (part) fadeNodes(partNodes(item, part), num(action.value, 1), duration, delay);
                 else {
-                    const from = item.opacity;
-                    tween(duration, delay, (k) => (item.opacity = lerp(from, clamp01(num(action.value, 1)), smooth(k))));
+                    let from = null;
+                    tween(duration, delay, (k) => {
+                        from ??= item.opacity;
+                        item.opacity = lerp(from, clamp01(num(action.value, 1)), smooth(k));
+                    });
                 }
             } else if (action.do === "transform") transform(item, action, duration, delay);
             else if (action.do === "apply" && item.map) {
-                const from = [...item.matrix];
                 const to = action.matrix.flat();
-                tween(duration, delay, (k) => (item.matrix = from.map((v, i) => lerp(v, to[i], smooth(k)))));
+                let from = null;
+                tween(duration, delay, (k) => {
+                    from ??= [...item.matrix];
+                    item.matrix = from.map((v, i) => lerp(v, to[i], smooth(k)));
+                });
             }
         }
     }
@@ -871,7 +915,19 @@ function build(spec, world, katex) {
     for (const [def, index] of [...listed].sort((a, b) => (rank[a[0].type] ?? 2) - (rank[b[0].type] ?? 2) || a[1] - b[1])) add(def, index);
     listed.filter(([def]) => !def.hidden).forEach(([def], i) => show(items.get(def.id), TIME.show, Math.min(2.4, i * 0.14)));
 
+    const bounds = () => {
+        let box = null;
+        for (const id of items.keys()) box = union(box, boxOf(id));
+        if (!box || !Number.isFinite(box.x) || box.w < 1 || box.h < 1) return { x: 0, y: 0, w: W, h: H };
+        const x0 = Math.max(0, Math.min(W * 0.35, box.x - 36));
+        const y0 = Math.max(0, Math.min(H * 0.35, box.y - 28));
+        const x1 = Math.min(W, Math.max(W * 0.65, box.x + box.w + 36));
+        const y1 = Math.min(H, Math.max(H * 0.65, box.y + box.h + 28));
+        return { x: x0, y: y0, w: Math.max(200, x1 - x0), h: Math.max(140, y1 - y0) };
+    };
+
     return {
+        bounds,
         step(index) {
             if (!Number.isInteger(index) || index <= played || index >= steps.length) return;
             for (let i = played + 1; i <= index; i++) for (const action of Array.isArray(steps[i]) ? steps[i] : []) act(action ?? {}, i < index);
@@ -882,7 +938,7 @@ function build(spec, world, katex) {
             steps.push(...more);
             for (const action of more.flat()) if (action?.do === "set") for (const [name, v] of Object.entries(action.vars ?? {})) if (!Number.isInteger(v)) whole.delete(name);
         },
-        frame(t) {
+        frame(t, onLayout) {
             now = t;
             const busy = tweens.length || flows.size || settle > 0 || easing;
             for (const tw of [...tweens]) {
@@ -905,6 +961,7 @@ function build(spec, world, katex) {
             }
             easing = declutter();
             for (const item of items.values()) if (item.attached) item.draw?.();
+            onLayout?.();
             for (const f of flows.values()) {
                 const t = Math.max(0, now - f.start) * f.speed;
                 f.dots.forEach((dot, i) => {
@@ -925,20 +982,28 @@ function build(spec, world, katex) {
     };
 }
 
-// spec: { elements, vars, steps, autoplay, stepSeconds, loop }; returns { step(index), dispose() }.
+// spec: { elements, vars, steps, autoplay, stepSeconds, loop }; returns { step(index), setInset(px), dispose() }.
 export async function renderBoard(spec, { root }) {
     const katex = await loadKatex();
-    const inset = spec.autoplay === false ? 110 : 0;
+    let inset = spec.autoplay === false ? 96 : 0;
+    let envelope = null;
+    let board = null;
     const stage = element("div", "board", root);
     const world = element("div", "board-world", stage);
     const fit = () => {
         const w = root.clientWidth || innerWidth;
         const h = Math.max(1, (root.clientHeight || innerHeight) - inset);
-        const k = Math.min(w / W, h / H);
-        world.style.transform = `translate(${(w - W * k) / 2}px, ${(h - H * k) / 2}px) scale(${k})`;
+        if (board) envelope = union(envelope, board.bounds());
+        const b = envelope ?? { x: 0, y: 0, w: W, h: H };
+        const base = Math.min(w / W, h / H);
+        const k = Math.min(w / b.w, h / b.h, base * 1.42);
+        const tx = (w - b.w * k) / 2 - b.x * k;
+        const ty = (h - b.h * k) / 2 - b.y * k;
+        world.style.transform = `translate(${tx.toFixed(1)}px, ${ty.toFixed(1)}px) scale(${k.toFixed(4)})`;
     };
     fit();
-    let board = build(spec, world, katex);
+    board = build(spec, world, katex);
+    fit();
     let timer = 0;
     const steps = Array.isArray(spec.steps) ? spec.steps : [];
     // Standalone boards play their steps on a timer and loop; explanations drive the steps instead.
@@ -949,7 +1014,9 @@ export async function renderBoard(spec, { root }) {
             if (next >= steps.length) {
                 if (spec.loop === false) return;
                 board.dispose();
+                envelope = null;
                 board = build(spec, world, katex);
+                fit();
                 next = 0;
                 timer = setTimeout(tick, 2500);
                 return;
@@ -962,7 +1029,7 @@ export async function renderBoard(spec, { root }) {
     let raf = 0;
     const loop = () => {
         raf = requestAnimationFrame(loop);
-        board.frame(performance.now() / 1000);
+        board.frame(performance.now() / 1000, fit);
     };
     loop();
     const resize = new ResizeObserver(fit);
@@ -976,6 +1043,11 @@ export async function renderBoard(spec, { root }) {
             if (Number.isInteger(index) && index >= 0) board.step(index);
         },
         addSteps: (more) => board.addSteps(more),
+        setInset(px) {
+            const h = root.clientHeight || innerHeight;
+            inset = Math.max(0, Math.min(Math.round(num(px, 0)), h * 0.45));
+            fit();
+        },
         dispose() {
             cancelAnimationFrame(raf);
             clearTimeout(timer);

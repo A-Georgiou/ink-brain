@@ -327,7 +327,7 @@ export class Panels {
         const height = clamp(rect.height ?? (isNew ? defaultHeight : parseFloat(el.style.height) || el.offsetHeight), keepSize && !Number.isFinite(rect.height) ? 1 : min[1], innerHeight - margin * 2);
         const placeSelf = !Number.isFinite(rect.x) || !Number.isFinite(rect.y);
         if (isNew) panel.autoPlaced = placeSelf;
-        const target = isNew && placeSelf && kind === "scene" && !Number.isFinite(rect.width) && !Number.isFinite(rect.height) ? this.target() : null;
+        const target = isNew && placeSelf && ["scene", "board"].includes(kind) && !Number.isFinite(rect.width) && !Number.isFinite(rect.height) ? this.target() : null;
         const others = [...this.#panels.values()].filter((p) => p !== panel && p.el.isConnected && !p.el.classList.contains("away")).map((p) => asRect(p.el.getBoundingClientRect()));
         const roomy = target && stageSpot({ target: asRect(target), view: { width: innerWidth, height: innerHeight }, max: STAGE_MAX, min: STAGE_MIN, others });
         // A panel carried on from an earlier turn gets out of the way if the user has since marked something under it.
