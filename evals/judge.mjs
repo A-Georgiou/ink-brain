@@ -121,6 +121,17 @@ export function overall(scores, core) {
 // A run passes when every criterion is at least good.
 export const passes = (scores) => Math.min(...Object.values(scores)) >= 4;
 
+// Flag panel uncertainty without changing its strict scores or caps.
+export function judgeDisagreement({ category, judges }) {
+    const scored = judges?.filter((judge) => judge.scores) ?? [];
+    if (scored.length < 2) return { large: [], overallGap: null, flagged: true, missing: (judges?.length ?? 2) - scored.length };
+    const core = coreOf(category);
+    const gaps = Object.fromEntries(Object.keys(scored[0].scores).map((key) => [key, Math.abs(scored[0].scores[key] - scored[1].scores[key])]));
+    const large = Object.entries(gaps).filter(([, gap]) => gap >= 2).map(([key]) => key);
+    const overallGap = Math.abs(overall(scored[0].scores, core) - overall(scored[1].scores, core));
+    return { large, overallGap, flagged: large.length > 0 || overallGap >= 1, missing: (judges?.length ?? 2) - scored.length };
+}
+
 export class Judge {
     // models is the panel, ideally from different families than the model under test; disabledMcpServers keeps the user's MCP servers from starting.
     constructor({ client, models, effort, workspace, disabledMcpServers = [] }) {
@@ -172,6 +183,6 @@ export class Judge {
         if (!judges.length) throw new Error(asked.map((j) => j.failed).join("; "));
         const keys = Object.keys(judges[0].scores);
         const scores = Object.fromEntries(keys.map((key) => [key, judges.reduce((sum, j) => sum + j.scores[key], 0) / judges.length]));
-        return { score: overall(scores, coreOf(input.scenario.category)), scores, pass: passes(scores), judges: asked, issues: judges.flatMap((j) => j.issues).slice(0, 8), summary: judges.map((j) => j.summary).join(" ") };
+        return { score: overall(scores, coreOf(input.scenario.category)), scores, pass: passes(scores), judges: asked, disagreement: judgeDisagreement({ category: input.scenario.category, judges: asked }), issues: judges.flatMap((j) => j.issues).slice(0, 8), summary: judges.map((j) => j.summary).join(" ") };
     }
 }

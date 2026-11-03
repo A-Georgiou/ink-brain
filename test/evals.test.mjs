@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { limitsFor, overall, passes } from "../evals/judge.mjs";
+import { judgeDisagreement, limitsFor, overall, passes } from "../evals/judge.mjs";
+import { compareRuns } from "../evals/stats.mjs";
 
 const run = (category, metrics = {}, tools = []) => ({
     scenario: { category, expect: ["board"], points: ["a", "b", "c"] },
@@ -30,4 +31,26 @@ test("one weak criterion sinks the overall score and the pass", () => {
     assert.equal(overall({ ...scores, correct: 2, fidelity: 5 }, "fidelity"), 3);
     assert.equal(passes(scores), false);
     assert.equal(passes({ ...scores, fidelity: 4 }), true);
+});
+
+test("scenario pairing removes common difficulty without treating repeats as independent tasks", () => {
+    const scored = (scenario, score, attempt = 1) => ({ scenario, category: "3d", id: `${scenario}~${attempt}`, score });
+    const baseline = [scored("easy", 4), scored("hard", 2), scored("hard", 2, 2)];
+    const improved = [scored("easy", 5), scored("hard", 3), scored("hard", 3, 2), scored("new", 5)];
+    const result = compareRuns(improved, baseline, { bootstrap: 200, seed: 1 });
+    assert.equal(result.scenarios, 2);
+    assert.deepEqual(result.runs, [3, 3]);
+    assert.equal(result.delta, 1);
+    assert.deepEqual(result.interval, [1, 1]);
+    assert.equal(result.pairedSE, 0);
+    assert.ok(result.unpairedSE > 0);
+});
+
+test("judge disagreement reports large gaps even when the core caps the final score", () => {
+    const scores = { correct: 2, complete: 4, clear: 4, visual: 4, fit: 4, fidelity: 2 };
+    const report = judgeDisagreement({ category: "3d", judges: [{ scores }, { scores: { ...scores, correct: 4 } }] });
+    assert.deepEqual(report.large, ["correct"]);
+    assert.equal(report.flagged, true);
+    assert.equal(report.overallGap, 0);
+    assert.equal(judgeDisagreement({ category: "3d", judges: [{ scores }, { failed: "offline" }] }).missing, 1);
 });
