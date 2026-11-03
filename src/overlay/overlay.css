@@ -785,6 +785,11 @@ body:not(.speaking):not(.thinking) .bubble-stop {
     user-select: text;
 }
 
+.panel-body.markdown pre {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
 .panel-body iframe {
     position: absolute;
     inset: 0;

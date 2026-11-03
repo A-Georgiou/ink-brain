@@ -6,8 +6,8 @@ const KIND_LABEL = { markdown: "Notes", mermaid: "Diagram", three: "3D", html: "
 const DEFAULT_SIZE = { markdown: [440, 380], mermaid: [600, 440], three: [560, 460], html: [600, 460], image: [520, 420], scene: [720, 540], board: [760, 520] };
 // Boards and scenes scale their content to the panel, so smaller ones become hard to read.
 const MIN_SIZE = { scene: [520, 380], board: [640, 380] };
-// A 3D stage beside what the user circled takes as much of the free space as it can, from this size down.
-const [STAGE_MAX, STAGE_MIN] = [[920, 700], [400, 300]];
+// A stage or note beside what the user circled takes as much of the free space as it can, from the first size down to the second.
+const ROOMY = { scene: [[920, 700], [400, 300]], board: [DEFAULT_SIZE.board, [480, 340]], markdown: [[640, 700], [280, 200]] };
 const SANDBOX_URL = "/overlay/sandbox.html";
 const CLOSE_ICON = `<svg viewBox="0 0 24 24" width="14" height="14"><path stroke="currentColor" stroke-width="2.2" stroke-linecap="round" d="M6 6l12 12M18 6 6 18"/></svg>`;
 
@@ -100,6 +100,7 @@ export class Panels {
         panel.step = null;
         panel.added = [];
         panel.autoSize = !frameless && !Number.isFinite(rect.width) && !Number.isFinite(rect.height) && isNew;
+        if (panel.autoHeight == null || isNew || frameless || Number.isFinite(rect.height)) panel.autoHeight = !frameless && !Number.isFinite(rect.height);
         if (frameless) this.#cover(panel, rect);
         else this.#layout(panel, kind, rect, isNew);
         this.#anchor(panel);
@@ -109,7 +110,7 @@ export class Panels {
             this.#dropFrame(panel);
             body.className = "panel-body markdown";
             body.innerHTML = renderMarkdown(content);
-            if (!frameless && !Number.isFinite(rect.height)) this.#fitHeight(panel);
+            if (panel.autoHeight) this.#fitHeight(panel);
             return { ok: true };
         }
         body.className = "panel-body";
@@ -290,6 +291,7 @@ export class Panels {
             document.body.classList.add("dragging");
             panel.autoSize = false;
             panel.autoPlaced = false;
+            if (mode === "resizing") panel.autoHeight = false;
             const move = (e) => apply(start, e.clientX - start.x, e.clientY - start.y);
             const up = () => {
                 el.classList.remove(mode);
@@ -308,9 +310,11 @@ export class Panels {
     #fitHeight(panel) {
         const el = panel.el;
         const body = el.querySelector(".panel-body");
+        const previous = el.offsetHeight;
+        el.style.height = "auto";
         const height = clamp(body.scrollHeight + el.offsetHeight - body.clientHeight, 160, innerHeight - 80);
-        if (Math.abs(height - el.offsetHeight) < 2) return;
         el.style.height = `${height}px`;
+        if (Math.abs(height - previous) < 2) return;
         const spot = panel.autoPlaced ? this.#place(el.offsetWidth, height, panel, null, [1]) : { x: el.offsetLeft, y: el.offsetTop };
         el.style.left = `${clamp(spot.x, 16, innerWidth - el.offsetWidth - 16)}px`;
         el.style.top = `${clamp(spot.y, 40, innerHeight - height - 16)}px`;
@@ -327,9 +331,11 @@ export class Panels {
         const height = clamp(rect.height ?? (isNew ? defaultHeight : parseFloat(el.style.height) || el.offsetHeight), keepSize && !Number.isFinite(rect.height) ? 1 : min[1], innerHeight - margin * 2);
         const placeSelf = !Number.isFinite(rect.x) || !Number.isFinite(rect.y);
         if (isNew) panel.autoPlaced = placeSelf;
-        const target = isNew && placeSelf && ["scene", "board"].includes(kind) && !Number.isFinite(rect.width) && !Number.isFinite(rect.height) ? this.target() : null;
+        const [most, least] = ROOMY[kind] ?? [];
+        const target = isNew && placeSelf && most && !Number.isFinite(rect.width) && !Number.isFinite(rect.height) ? this.target() : null;
         const others = [...this.#panels.values()].filter((p) => p !== panel && p.el.isConnected && !p.el.classList.contains("away")).map((p) => asRect(p.el.getBoundingClientRect()));
-        const roomy = target && stageSpot({ target: asRect(target), view: { width: innerWidth, height: innerHeight }, max: kind === "board" ? DEFAULT_SIZE.board : STAGE_MAX, min: kind === "board" ? [480, 340] : STAGE_MIN, others });
+        if (kind === "markdown") others.push(...this.avoid().filter((r) => r && r !== target).map(asRect));
+        const roomy = target && stageSpot({ target: asRect(target), view: { width: innerWidth, height: innerHeight }, max: most, min: least, others });
         // A panel carried on from an earlier turn gets out of the way if the user has since marked something under it.
         const inTheWay = !isNew && placeSelf && panel.autoPlaced && covers(this.target(), asRect(el.getBoundingClientRect()));
         const spot = roomy || (isNew || inTheWay ? this.#place(width, height, panel, placeSelf ? null : rect, undefined, min) : { x: placeSelf ? parseFloat(el.style.left) || el.offsetLeft : rect.x, y: placeSelf ? parseFloat(el.style.top) || el.offsetTop : rect.y, w: width, h: height });
