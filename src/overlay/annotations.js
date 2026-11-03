@@ -421,8 +421,9 @@ export class Annotations {
             duration = 0.55;
         } else if (kind === "underline") {
             const y = shape.y + shape.h + clamp(shape.h * 0.3, 2, 5);
-            const points = Array.from({ length: 7 }, (_, i) => [shape.x - 4 + ((shape.w + 8) * i) / 6, y + Math.sin(i * 1.7 + seed) * 1.6]);
-            duration = this.#ink(group, generator.curve(points, this.#opts(color, seed, { roughness: 1.5 })), delay);
+            const m = clamp(shape.w * 0.05, 1, 4);
+            const points = Array.from({ length: 7 }, (_, i) => [shape.x - m + ((shape.w + m * 2) * i) / 6, y + Math.sin(i * 1.7 + seed) * clamp(shape.h * 0.1, 0.6, 1.6)]);
+            duration = this.#ink(group, generator.curve(points, this.#opts(color, seed, { roughness: 0.9, strokeWidth: 2.6 })), delay);
         } else if (kind === "spotlight") {
             const maskId = `mask-${key.replace(/[^\w-]/g, "")}`;
             const mask = svg("mask", { id: maskId });

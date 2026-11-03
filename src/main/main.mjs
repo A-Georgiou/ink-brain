@@ -658,14 +658,23 @@ async function snapShapes(shapes) {
     return shapes.map((shape, index) => (wanted[index] ? snapShape(shape, (found.elements[next++] ?? []).map(model)) : shape));
 }
 
-// Callout handwriting and arrow tails settle onto quiet parts of the screen, judged from a fresh look at it.
+// Which parts of this turn's screenshot are busy, shared by the answer bubble and the callouts.
+let ink = null;
+function shareInk(image) {
+    ink = null;
+    try {
+        const picture = nativeImage.createFromBuffer(Buffer.from(image.data, "base64"));
+        const size = picture.getSize();
+        ink = { grid: inkGrid({ ...size, data: picture.toBitmap() }), size };
+        overlayCall("ink", { grid: ink.grid, scale: geometry.scale }).catch(() => {});
+    } catch {
+        // Without it the bubble just keeps its usual spot.
+    }
+}
+
+// Callout handwriting and arrow tails settle onto quiet parts of the turn's screenshot, as the evals measure them.
 async function quietMarks(shapes) {
-    if (!needsSettling(shapes)) return shapes;
-    const g = geometry;
-    const shot = await helper.request("capture", { displayId: g.displayId, excludePids: [process.pid], format: "jpeg", quality: 0.8, maxLongEdge: Math.max(g.modelWidth, g.modelHeight) }, { timeoutMs: 8_000 });
-    const image = nativeImage.createFromBuffer(Buffer.from(shot.data, "base64"));
-    const { width, height } = image.getSize();
-    return settleMarks(shapes, inkGrid({ width, height, data: image.toBitmap() }), { width, height });
+    return ink && needsSettling(shapes) ? settleMarks(shapes, ink.grid, ink.size) : shapes;
 }
 
 // A region in screenshot pixels as overlay pixels, clamped to the display.
@@ -1172,6 +1181,7 @@ async function runTurn({ text, marks }) {
     try {
         const [shot, app] = await Promise.all([captureScreen({ marks }), front?.app ? front : frontmost()]);
         if (turn.done) return turn.ended;
+        setImmediate(() => shareInk(shot.images[0]));
         turn.front = app;
         prepareElements(app);
         const { remembered, recent } = memoryContext(brain, app);

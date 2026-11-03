@@ -36,16 +36,17 @@ export function inkIn({ cols, rows, sums }, { x, y, w, h }) {
     return at(r1, c1) - at(r0, c1) - at(r1, c0) + at(r0, c0);
 }
 
-// Where a note wanted at box should go: there when it covers next to nothing, else the nearest spot that is clearly quieter and keeps off avoid.
-export function quietSpot(grid, box, { view, avoid = [], reach = 300, step = 12, margin = 12 }) {
-    const here = inkIn(grid, box);
+// Where a note wanted at box should go: there when it and its line to via cover next to nothing, else the nearest spot that is clearly quieter and keeps off avoid.
+export function quietSpot(grid, box, { view, avoid = [], via = null, reach = 300, step = 12, margin = 12 }) {
+    const weigh = (spot) => inkIn(grid, spot) + (via ? 2 * inkAlong(grid, via, [spot.x + spot.w / 2, spot.y + spot.h / 2], 24) : 0);
+    const here = weigh(box);
     if (here < 3) return box;
     let best = null;
     for (let dy = -reach; dy <= reach; dy += step) {
         for (let dx = -reach; dx <= reach; dx += step) {
             const spot = { ...box, x: box.x + dx, y: box.y + dy };
             if (spot.x < margin || spot.y < margin || spot.x + spot.w > view.width - margin || spot.y + spot.h > view.height - margin || overlapArea(spot, avoid) > 0) continue;
-            const ink = inkIn(grid, spot);
+            const ink = weigh(spot);
             const cost = ink * 40 + Math.hypot(dx, dy);
             if (!best || cost < best.cost) best = { spot, ink, cost };
         }
@@ -118,7 +119,7 @@ export function settleMarks(shapes, grid, view) {
         if (isArrow(shape)) return settleTail(shape, grid, view, aims);
         if (!isCallout(shape)) return shape;
         const box = calloutBox(shape, view);
-        const spot = quietSpot(grid, box, { view, avoid: aims });
+        const spot = quietSpot(grid, box, { view, avoid: aims, via: [shape.x, shape.y] });
         aims.push(spot);
         return spot === box ? shape : { ...shape, at: [spot.x + spot.w / 2, spot.y + spot.h / 2] };
     });

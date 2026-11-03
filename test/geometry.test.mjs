@@ -130,6 +130,15 @@ test("the answer sits by the user's marks, moves off what Copilot draws there, a
     assert.equal(place({ current: "beside-right" }).name, "beside-right");
 });
 
+test("the answer finds a quiet part of the screen when its usual spot is busy, and keeps the usual spot on a quiet screen", () => {
+    const busy = { x: 400, y: 600, w: 700, h: 300 };
+    const place = (ink) => bubbleSpot({ w: 420, h: 175, view: { width: 1512, height: 982 }, bottomInset: 110, ink });
+    assert.equal(place(null).name, "bottom");
+    assert.equal(place(() => 0).name, "bottom");
+    const quiet = place((box) => Math.round(overlapArea(box, [busy]) / 64));
+    assert.equal(overlapArea(quiet.box, [busy]), 0);
+});
+
 test("board expressions compile without eval and say what is wrong", () => {
     assert.equal(compile("2x^2 - sin(a x)", ["x", "a"])({ x: 3, a: 0 }), 18);
     assert.equal(compile("-x^2", ["x"])({ x: 3 }), -9);

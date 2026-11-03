@@ -276,6 +276,7 @@ async function play(scenario, dir, { reader, client, replay = null, grid }) {
                 if (!index) start = Date.now();
                 stage.send("live:state", overlayState(true));
                 stage.send("live:turn", { type: "start", id: turnNo, question: spec.ask, target: "Ink Brain", anchor: boundsOfMarks(marks) });
+                stage.call("ink", { grid, scale: 1 }).catch(() => {});
             };
             let error = null;
             const past = replay && (replay.turns?.[index] ?? (index ? null : replay));

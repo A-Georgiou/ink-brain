@@ -160,8 +160,8 @@ export function stageSpot({ target, view, max, min, others = [], top = 52, margi
     return best && { x: best.x, y: best.y, w: best.w, h: best.h };
 }
 
-// Where the w x h answer bubble goes: near the user's marks without covering them, drawings or panels.
-export function bubbleSpot({ w, h, view, bottomInset, anchor = null, drawn = [], current = null }) {
+// Where the w x h answer bubble goes: near the user's marks without covering them, drawings or panels, and where the screen is quiet when ink counts the cells with something in them under a box.
+export function bubbleSpot({ w, h, view, bottomInset, anchor = null, drawn = [], current = null, ink = null }) {
     const m = 16;
     const gap = 44;
     const bottom = view.height - h - bottomInset;
@@ -183,12 +183,16 @@ export function bubbleSpot({ w, h, view, bottomInset, anchor = null, drawn = [],
             above: [anchor.x + anchor.w / 2 - w / 2, anchor.y - h - gap],
         });
     }
+    if (ink) {
+        for (let y = 64; y + h <= view.height - m; y += 48) for (let x = m; x + w <= view.width - m; x += 48) spots[`quiet-${x}-${y}`] = [x, y];
+    }
     const near = anchor && { x: anchor.x - 40, y: anchor.y - 40, w: anchor.w + 80, h: anchor.h + 80 };
     const [hx, hy] = anchor ? [anchor.x + anchor.w / 2, anchor.y + anchor.h / 2] : [view.width / 2, bottom + h / 2];
     const scored = Object.entries(spots).map(([name, [x, y]]) => {
         const box = { x: Math.min(Math.max(x, m), view.width - w - m), y: Math.min(Math.max(y, m + 24), view.height - h - m), w, h };
         let cost = overlapArea(box, drawn) * 20 + (Math.abs(box.x - x) + Math.abs(box.y - y)) * 300 + Math.hypot(box.x + w / 2 - hx, box.y + h / 2 - hy) * 40;
         if (anchor) cost += overlapArea(box, [anchor]) * 60 + overlapArea(box, [near]) * 6;
+        if (ink) cost += ink(box) * 120;
         return { name, box, cost };
     });
     const best = scored.reduce((a, b) => (b.cost < a.cost ? b : a));

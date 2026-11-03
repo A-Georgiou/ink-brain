@@ -5,6 +5,7 @@ import { Ink } from "./ink.js";
 import { renderMarkdown } from "./markdown.js";
 import { Panels } from "./panels.js";
 import { anchorAt, anchorOf, centreOf, pageState } from "/shared/anchors.mjs";
+import { inkIn } from "/shared/calm.mjs";
 import { bubbleSpot, overlapArea } from "/shared/geometry.mjs";
 
 const api = window.live;
@@ -47,6 +48,8 @@ let state = {};
 let typed = false;
 let interactive = false;
 let lastAnchor = null;
+// How busy each part of the screen was when the turn began, so the answer can sit on a quiet part.
+let screenInk = null;
 
 const ink = new Ink($("#ink"));
 const annotations = new Annotations({ svgRoot: $("#annotations"), labels: $("#labels"), boards: $("#boards"), pointer: $("#pointer"), ripples: $("#ripples") });
@@ -286,7 +289,9 @@ function createBubble() {
         const caption = document.querySelector("#captions:not(.hidden)");
         const drawn = [...annotations.rects(), ...panels.rects(), ...(caption && !el.classList.contains("minimized") ? [caption.getBoundingClientRect()] : [])];
         const view = { width: innerWidth, height: innerHeight };
-        const spot = () => bubbleSpot({ w: el.offsetWidth, h: el.offsetHeight, view, bottomInset: state.pen ? 150 : 110, anchor, drawn, current: slot });
+        const k = screenInk?.scale ?? 1;
+        const quiet = screenInk && ((box) => inkIn(screenInk.grid, { x: box.x * k, y: box.y * k, w: box.w * k, h: box.h * k }));
+        const spot = () => bubbleSpot({ w: el.offsetWidth, h: el.offsetHeight, view, bottomInset: state.pen ? 150 : 110, anchor, drawn, current: slot, ink: quiet });
         el.classList.remove("tucked");
         let pick = spot();
         // A finished answer with nowhere to go but over a panel tucks down to its header; hovering it opens it again.
@@ -637,7 +642,10 @@ api.on("live:call", async ({ id, method, params }) => {
     try {
         let result = null;
         if (method === "compose") result = await compose(params);
-        else if (method === "annotate") {
+        else if (method === "ink") {
+            screenInk = params;
+            bubble.reflow();
+        } else if (method === "annotate") {
             const centre = centreOf(params.shapes);
             const page = pages.place(centre && { ...centre, w: 0, h: 0 });
             const { duration, box } = annotations.draw(params.shapes, { ...params, page });
