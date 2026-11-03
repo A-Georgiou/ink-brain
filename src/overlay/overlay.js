@@ -475,8 +475,8 @@ api.on("live:explain", captions);
 
 api.on("live:turn", (event) => {
     if (event.type === "start") {
-        // Every turn, however it was asked, keeps new panels off what the user marked.
-        lastAnchor = event.anchor ?? null;
+        // Every turn, however it was asked, keeps new panels off what the user marked; a follow-up without marks is still about it.
+        lastAnchor = event.anchor ?? lastAnchor;
         pages.beginTurn(event.anchor);
         bubble.start(event);
         dockText("");
