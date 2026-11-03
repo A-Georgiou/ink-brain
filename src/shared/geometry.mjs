@@ -184,7 +184,7 @@ export function bubbleSpot({ w, h, view, bottomInset, anchor = null, drawn = [],
         });
     }
     if (ink) {
-        for (let y = 64; y + h <= view.height - m; y += 48) for (let x = m; x + w <= view.width - m; x += 48) spots[`quiet-${x}-${y}`] = [x, y];
+        for (let y = 64; y + h <= view.height - m; y += 16) for (let x = m; x + w <= view.width - m; x += 16) spots[`quiet-${x}-${y}`] = [x, y];
     }
     const near = anchor && { x: anchor.x - 40, y: anchor.y - 40, w: anchor.w + 80, h: anchor.h + 80 };
     const [hx, hy] = anchor ? [anchor.x + anchor.w / 2, anchor.y + anchor.h / 2] : [view.width / 2, bottom + h / 2];
@@ -192,7 +192,7 @@ export function bubbleSpot({ w, h, view, bottomInset, anchor = null, drawn = [],
         const box = { x: Math.min(Math.max(x, m), view.width - w - m), y: Math.min(Math.max(y, m + 24), view.height - h - m), w, h };
         let cost = overlapArea(box, drawn) * 20 + (Math.abs(box.x - x) + Math.abs(box.y - y)) * 300 + Math.hypot(box.x + w / 2 - hx, box.y + h / 2 - hy) * 40;
         if (anchor) cost += overlapArea(box, [anchor]) * 60 + overlapArea(box, [near]) * 6;
-        if (ink) cost += ink(box) * 120;
+        if (ink) cost += ink(box) * 360;
         return { name, box, cost };
     });
     const best = scored.reduce((a, b) => (b.cost < a.cost ? b : a));
