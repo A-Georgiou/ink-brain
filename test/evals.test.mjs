@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { conversationMetrics, marksFor, pickFrames, turnsOf } from "../evals/conversation.mjs";
 import { judgeDisagreement, limitsFor, overall, passes } from "../evals/judge.mjs";
+import { latencyMetrics, replayTimeline } from "../evals/latency.mjs";
 import { measureLayout } from "../evals/layout.mjs";
 import { scriptedAnswer } from "../evals/learner.mjs";
 import { compareRuns, sameCodeControl } from "../evals/stats.mjs";
@@ -190,4 +191,16 @@ test("panels left piled up at the end of a conversation cap the visuals", () => 
     assert.deepEqual(caps(limits), { visual: 3 });
     assert.deepEqual(caps(limitsFor(run("conversation", { ...metrics, panelsAtEnd: 1 }), { points: [{ said: "yes", shown: "yes" }, { said: "yes", shown: "yes" }, { said: "yes", shown: "yes" }] })), {});
     assert.equal(pickFrames(record, (frames) => frames, 4).length, 3);
+});
+
+test("latency checks fail missing visuals and apply each category's first-visual budget", () => {
+    assert.equal(latencyMetrics("3d", { firstVisual: 14_000 }).firstVisualWithinBudget, true);
+    assert.equal(latencyMetrics("pointing", { firstVisual: 14_000 }).firstVisualWithinBudget, false);
+    for (const firstVisual of [null, undefined, -1, Infinity]) assert.equal(latencyMetrics("maths", { firstVisual }).firstVisualWithinBudget, false);
+});
+
+test("stream replays keep text, argument deltas and their matching tool call in time order", () => {
+    const tool = { id: "c1", name: "live_explain", at: 30, args: {} };
+    const timeline = [{ kind: "input", at: 20, id: "c1", delta: "{}" }, { kind: "text", at: 10, text: "Look" }];
+    assert.deepEqual(replayTimeline({ timeline, tools: [tool] }), [timeline[1], timeline[0], { kind: "tool", at: 30, tool }]);
 });

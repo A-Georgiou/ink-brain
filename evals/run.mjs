@@ -16,6 +16,7 @@ import { boundsOfMarks, cropAround, isRegion, panelRect } from "../src/shared/ge
 import { STANDALONE_TOOLS, toToolResult } from "../src/shared/live-tools.mjs";
 import { conversationMetrics, marksFor, pickFrames, turnsOf } from "./conversation.mjs";
 import { Judge } from "./judge.mjs";
+import { latencyMetrics, replayTimeline } from "./latency.mjs";
 import { measureLayout } from "./layout.mjs";
 import { recordCheck } from "./learner.mjs";
 import { printReport, summarize } from "./report.mjs";
@@ -69,7 +70,7 @@ async function play(scenario, dir, { reader, client, replay = null }) {
     const roots = [path.join(os.homedir(), ".copilot", "session-state"), workspace];
     const asked = turnsOf(scenario);
     const many = asked.length > 1;
-    const record = { text: "", captions: [], tools: [], frames: [], console: [], checks: [], controls: false, error: null, firstWords: null, firstVisual: null, writing: null, streamed: null, total: null, ...(many ? { turns: [] } : {}) };
+    const record = { text: "", captions: [], tools: [], frames: [], timeline: [], console: [], checks: [], controls: false, error: null, firstWords: null, firstVisual: null, firstNarration: null, writing: null, streamed: null, total: null, ...(many ? { turns: [] } : {}) };
     let turn = { ask: asked[0].ask, at: 0, text: "", captions: [], tools: [], firstWords: null, firstVisual: null, error: null };
     const stage = await openStage({ image: screen, title: meta.title, onConsole: (line) => record.console.push(line.slice(0, 400)) });
     let start = Date.now();
@@ -98,13 +99,18 @@ async function play(scenario, dir, { reader, client, replay = null }) {
     };
 
     const surface = new Surface({
-        // The first visual is when something first appears on screen, which a streamed explanation does before its call finishes.
-        overlayCall(method, params, timeoutMs) {
-            if (VISUAL_CALLS.has(method)) {
-                record.firstVisual ??= elapsed();
+        // Count a visual only once the overlay confirms it rendered, and show judges the early streaming view.
+        async overlayCall(method, params, timeoutMs) {
+            const result = await stage.call(method, params, timeoutMs);
+            if (VISUAL_CALLS.has(method) && result?.ok !== false) {
                 turn.firstVisual ??= elapsed();
+                if (record.firstVisual == null) {
+                    record.firstVisual = elapsed();
+                    snap("first visual", 120);
+                    snap("early visual", 4_000);
+                }
             }
-            return stage.call(method, params, timeoutMs);
+            return result;
         },
         geometry: () => GEOMETRY,
         config: CONFIG,
@@ -170,6 +176,7 @@ async function play(scenario, dir, { reader, client, replay = null }) {
             stage.send("live:explain", event);
             if (event.controls) record.controls = true;
             if (event.type !== "step") return;
+            record.firstNarration ??= elapsed();
             record.captions.push(event.text);
             turn.captions.push(event.text);
             snap(`step ${event.index + 1}`, 2_200);
@@ -177,7 +184,7 @@ async function play(scenario, dir, { reader, client, replay = null }) {
         keepSeconds: CONFIG.explanationTtlSeconds,
     });
     const runTool = async (name, args, callId) => {
-        const entry = { name, at: elapsed(), args };
+        const entry = { name, id: callId, at: elapsed(), args };
         record.tools.push(entry);
         turn.tools.push(entry);
         stage.send("live:activity", { name, origin: "Ink Brain" });
@@ -198,6 +205,7 @@ async function play(scenario, dir, { reader, client, replay = null }) {
     const append = (text) => {
         record.firstWords ??= elapsed();
         turn.firstWords ??= elapsed();
+        record.timeline.push({ kind: "text", at: elapsed(), text });
         record.text += text;
         turn.text += text;
         stage.send("live:turn", { type: "delta", id: turnNo, text });
@@ -213,12 +221,14 @@ async function play(scenario, dir, { reader, client, replay = null }) {
         sawDelta = false;
     });
     brain.on("preparing", ({ name }) => stage.send("live:turn", { type: "preparing", id: turnNo, name }));
-    brain.on("input", ({ id, name, delta }) => {
+    const input = ({ id, name, delta }) => {
+        if (name === "live_explain") record.timeline.push({ kind: "input", at: elapsed(), id, name, delta });
         if (name === "live_explain") record.writing ??= elapsed();
         if (!STREAM || name !== "live_explain" || !explainer.feed(id, delta)) return;
         record.streamed = elapsed();
         stage.send("live:turn", { type: "tool", id: turnNo, name });
-    });
+    };
+    brain.on("input", input);
     brain.on("tool", ({ name }) => {
         stage.send("live:turn", { type: "tool", id: turnNo, name });
         if (OWN_TOOLS.has(name)) return;
@@ -254,15 +264,31 @@ async function play(scenario, dir, { reader, client, replay = null }) {
             let error = null;
             const past = replay && (replay.turns?.[index] ?? (index ? null : replay));
             if (replay) {
-                // Plays a recorded turn's own tool calls again at their times, so only the overlay's rendering differs.
                 begin();
-                for (const tool of past?.tools ?? []) {
-                    await sleep(tool.at - elapsed());
-                    if (turn.firstWords == null && past.firstWords != null && past.firstWords <= tool.at) append(past.text);
-                    if (OWN_TOOLS.has(tool.name) && tool.name !== "live_read") await runTool(tool.name, tool.args, `replay-${record.tools.length}`);
-                    else {
-                        record.tools.push(tool);
-                        turn.tools.push(tool);
+                if (past?.timeline?.length) {
+                    // Replays the recorded words, streamed arguments and tool calls on their own clock, so only the runtime differs.
+                    const pending = [];
+                    for (const event of replayTimeline(past)) {
+                        await sleep(event.at - elapsed());
+                        if (event.kind === "text") append(event.text);
+                        else if (event.kind === "input") input(event);
+                        else if (OWN_TOOLS.has(event.tool.name) && event.tool.name !== "live_read") pending.push(runTool(event.tool.name, event.tool.args, event.tool.id));
+                        else {
+                            record.tools.push(event.tool);
+                            turn.tools.push(event.tool);
+                        }
+                    }
+                    await Promise.all(pending);
+                } else {
+                    // Plays a recorded turn's own tool calls again at their times, so only the overlay's rendering differs.
+                    for (const tool of past?.tools ?? []) {
+                        await sleep(tool.at - elapsed());
+                        if (turn.firstWords == null && past.firstWords != null && past.firstWords <= tool.at) append(past.text);
+                        if (OWN_TOOLS.has(tool.name) && tool.name !== "live_read") await runTool(tool.name, tool.args, `replay-${record.tools.length}`);
+                        else {
+                            record.tools.push(tool);
+                            turn.tools.push(tool);
+                        }
                     }
                 }
                 if (turn.firstWords == null && past?.text) append(past.text);
@@ -337,6 +363,7 @@ function measure(scenario, meta, record) {
         firstWords: record.firstWords,
         firstVisual: record.firstVisual !== undefined ? record.firstVisual : (record.tools.find((tool) => VISUAL_TOOLS.has(tool.name) && !tool.failed)?.at ?? null),
         total: record.total,
+        ...latencyMetrics(scenario.category, record),
         boardOverlaps: overlaps.size,
         boardOff: off.size,
         ...measureLayout(record.frames, SCREEN),
