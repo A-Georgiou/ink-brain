@@ -1355,10 +1355,18 @@ function build(spec, world, katex) {
                 }
             } else if (action.do === "transform") transform(item, action, duration, delay);
             else if (action.do === "apply" && item.map) {
-                const to = action.matrix.flat();
+                const raw = action.matrix.flat();
                 let from = null;
+                let to = null;
                 tween(duration, delay, (k) => {
-                    from ??= [...item.matrix];
+                    if (!from) {
+                        from = [...item.matrix];
+                        const [a0, b0, c0, d0] = from;
+                        const [a1, b1, c1, d1] = raw;
+                        const det0 = a0 * d0 - b0 * c0;
+                        const det1 = a1 * d1 - b1 * c1;
+                        to = Math.abs(det0) > 1.05 && Math.abs(det1 + 1) < 1e-3 ? [a1 * a0 + b1 * c0, a1 * b0 + b1 * d0, c1 * a0 + d1 * c0, c1 * b0 + d1 * d0] : raw;
+                    }
                     item.matrix = from.map((v, i) => lerp(v, to[i], smooth(k)));
                 });
             }
