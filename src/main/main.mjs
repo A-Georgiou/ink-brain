@@ -755,12 +755,20 @@ async function signOutChatGPT() {
     if (!revoked) toast("Signed out on this Mac, but OpenAI did not confirm it. You can also disconnect Ink Brain in ChatGPT settings.", "warn");
 }
 
-// A fresh connection picks up a new sign-in, key or provider.
+// A fresh connection picks up a new sign-in, key or provider; changes made mid-check get a check of their own.
 let reconnecting = null;
+let changed = false;
 function reconnect() {
-    reconnecting ??= (async () => {
-        await embedded.stop();
-        await checkAnswer();
+    if (reconnecting) {
+        changed = true;
+        return reconnecting;
+    }
+    reconnecting = (async () => {
+        do {
+            changed = false;
+            await embedded.stop();
+            await checkAnswer();
+        } while (changed);
     })().finally(() => {
         reconnecting = null;
     });
@@ -1437,7 +1445,7 @@ function updateTrayMenu() {
             { label: "Clear screen", click: () => clearScreen("all") },
             { label: "New conversation", click: () => newConversation() },
             { type: "separator" },
-            { label: `${PROVIDERS[config.provider]?.label ?? PROVIDERS.copilot.label}: ${state.model}`, enabled: false },
+            { label: `${PROVIDERS[config.provider]?.label ?? PROVIDERS.copilot.label}: ${state.answer?.ready === false ? "not set up" : state.model}`, enabled: false },
             { label: "Set up...", click: () => showSetup(true) },
             { label: "Install Copilot CLI and App extension", click: () => installCliExtension() },
             { label: "Open settings file", click: () => openSettings() },
