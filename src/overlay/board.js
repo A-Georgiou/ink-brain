@@ -195,9 +195,10 @@ function build(spec, world, katex) {
     };
 
     const setTex = (node, source) => {
-        katex.render(live(source), node, katexOptions());
+        const shown = live(source).replace(/(?<!\\)%/g, "\\%");
+        katex.render(shown, node, katexOptions());
         node.dataset.source = source;
-        node.dataset.shown = live(source);
+        node.dataset.shown = shown;
     };
     const setText = (node, source) => {
         node.replaceChildren(...String(live(source)).split(/(\s+)/).map((word) => (/^\s*$/.test(word) ? word : Object.assign(document.createElement("span"), { textContent: word }))));

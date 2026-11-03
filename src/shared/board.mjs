@@ -34,7 +34,8 @@ export function labelTex(source) {
     const text = source.trim();
     const words = text.split(/\s+/);
     const prose = words.some((word) => /\p{L}{3}/u.test(word) && !/^(sin|cos|tan|log|ln|exp|lim|min|max)$/i.test(word));
-    return words.length > 1 && prose && /^[\p{L}\p{N}.,:;!?()'’/ +<>=-]+$/u.test(text) ? `\\text{${text}}` : source;
+    const wrapped = words.length > 1 && prose && /^[\p{L}\p{N}.,:;!?()'’/ %+<>=-]+$/u.test(text) ? `\\text{${text}}` : source;
+    return wrapped.replace(/(?<!\\)%/g, "\\%");
 }
 
 const ID = /^[\w-]+$/;

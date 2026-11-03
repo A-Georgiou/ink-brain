@@ -241,6 +241,8 @@ test("diagram labels retain spaces without changing mathematical notation", () =
     const rendered = katex.renderToString(labelTex("permission request"), { output: "html" }).replace(/<[^>]+>/g, "");
     assert.match(rendered, /permission\u00a0request/);
     assert.match(katex.renderToString(labelTex("SYN seq = 100"), { output: "html" }).replace(/<[^>]+>/g, ""), /SYN\u00a0seq\u00a0=\u00a0100/);
+    assert.match(katex.renderToString(labelTex("99%"), { output: "html" }).replace(/<[^>]+>/g, ""), /99%/);
+    assert.equal(withValues("Prior: P(A) = 1%"), "Prior: P(A) = 1%");
     assert.equal(labelTex("sin x"), "sin x");
     assert.equal(labelTex("x = 2"), "x = 2");
     assert.equal(labelTex("\\alpha + \\beta"), "\\alpha + \\beta");

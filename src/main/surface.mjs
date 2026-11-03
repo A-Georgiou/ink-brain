@@ -23,7 +23,7 @@ const asObject = (value) => {
 function texProblem(board, steps) {
     for (const [where, tex] of texSources(board, steps)) {
         try {
-            katex.renderToString(withValues(tex, board.vars ?? {}), katexOptions());
+            katex.renderToString(withValues(tex, board.vars ?? {}).replace(/(?<!\\)%/g, "\\%"), katexOptions());
         } catch (error) {
             return `tex of ${where}: ${String(error.message).replace(/^KaTeX parse error: /, "")}`;
         }
