@@ -10,7 +10,7 @@ import * as THREE from "three";
 import { buildPart } from "../src/overlay/parts.js";
 import { recentreRings } from "../src/overlay/repair.js";
 import { geometryFor } from "../src/overlay/shapes.js";
-import { bubbleSpot, cropAround, describeMarks, modelImageSize, overlapArea, shapeToOverlay, snapShape, stageSpot, validateShape } from "../src/shared/geometry.mjs";
+import { bubbleSpot, cropAround, crowds, describeMarks, modelImageSize, noteSpot, overlapArea, shapeToOverlay, snapShape, stageSpot, validateShape } from "../src/shared/geometry.mjs";
 
 test("model screenshots are capped at the configured long edge", () => {
     assert.deepEqual(modelImageSize(1512, 982), { width: 1512, height: 982, scale: 1 });
@@ -233,6 +233,18 @@ test("3D stages take the most free room beside the circled thing and only ever c
     assert.ok(overlapArea(spot, [target]) <= 800 * 600 * 0.05);
     assert.deepEqual(stageSpot({ target: { x: 40, y: 300, w: 200, h: 150 }, view, max: [920, 700], min: [400, 300] }).w, 920);
     assert.equal(stageSpot({ target: { x: 0, y: 0, w: 1512, h: 982 }, view, max: [920, 700], min: [400, 300] }), null);
+});
+
+test("notes go off what the user circled onto the quietest ground, and none fits over a circle that fills the screen", () => {
+    const view = { width: 1512, height: 982 };
+    const target = { x: 405, y: 533, w: 153, h: 18 };
+    const sizes = [[640, 420], [480, 540], [320, 800]];
+    const busy = { x: 0, y: 0, w: 700, h: 982 };
+    const spot = noteSpot({ target, view, sizes, ink: (box) => Math.round(overlapArea(box, [busy]) / 64) });
+    assert.equal(overlapArea(spot, [busy, target]), 0);
+    assert.ok(crowds({ x: 24, y: 52, w: 600, h: 549 }, target));
+    assert.ok(!crowds(spot, target, [{ x: 0, y: 0, w: 100, h: 100 }]));
+    assert.equal(noteSpot({ target: { x: 0, y: 0, w: 1512, h: 982 }, view, sizes }), null);
 });
 
 test("scene mechanisms must move real parts, and steps drive only mechanisms", () => {

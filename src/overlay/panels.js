@@ -1,6 +1,6 @@
 // Floating panels on the user's screen: Markdown inline; diagrams, 3D and HTML in sandboxed frames.
 import { renderMarkdown } from "./markdown.js";
-import { stageSpot } from "/shared/geometry.mjs";
+import { crowds, noteSpot, stageSpot } from "/shared/geometry.mjs";
 
 const KIND_LABEL = { markdown: "Notes", mermaid: "Diagram", three: "3D", html: "Interactive", scene: "Explainer", board: "Explainer", cutout: "Cutout", image: "Render" };
 const DEFAULT_SIZE = { markdown: [440, 380], mermaid: [600, 440], three: [560, 460], html: [600, 460], image: [520, 420], scene: [720, 540], board: [760, 520] };
@@ -8,6 +8,12 @@ const DEFAULT_SIZE = { markdown: [440, 380], mermaid: [600, 440], three: [560, 4
 const MIN_SIZE = { scene: [520, 380], board: [640, 380] };
 // A stage or note beside what the user circled takes as much of the free space as it can, from the first size down to the second.
 const ROOMY = { scene: [[920, 700], [400, 300]], board: [DEFAULT_SIZE.board, [480, 340]], markdown: [[640, 700], [280, 200]] };
+// What a note tries when it would cover what the user circled: roomy widths first, then narrow ones, then a roomy one that clips a corner of it.
+const NOTE_TRIES = [
+    { widths: [640, 560, 480, 420], allow: 0.05 },
+    { widths: [360, 320], allow: 0.05 },
+    { widths: [640, 560, 480, 420], allow: 0.15 },
+];
 const SANDBOX_URL = "/overlay/sandbox.html";
 const CLOSE_ICON = `<svg viewBox="0 0 24 24" width="14" height="14"><path stroke="currentColor" stroke-width="2.2" stroke-linecap="round" d="M6 6l12 12M18 6 6 18"/></svg>`;
 
@@ -25,13 +31,14 @@ export class Panels {
     #frames = new Map();
     #z = 20;
 
-    // pageFor(rect) names the page a panel at rect belongs to, so it hides and moves with that page; target() is what the user circled.
-    constructor(container, { avoid = () => [], target = () => null, onLayout = () => {}, pageFor = () => null } = {}) {
+    // pageFor(rect) names the page a panel at rect belongs to, so it hides and moves with that page; target() is what the user circled; ink() counts the busy cells of the screen under a box.
+    constructor(container, { avoid = () => [], target = () => null, onLayout = () => {}, pageFor = () => null, ink = () => null } = {}) {
         this.container = container;
         this.avoid = avoid;
         this.target = target;
         this.onLayout = onLayout;
         this.pageFor = pageFor;
+        this.ink = ink;
         addEventListener("message", (event) => this.#onMessage(event));
     }
 
@@ -307,18 +314,43 @@ export class Panels {
         });
     }
 
+    // How tall a note must be to show all it says at its current width.
+    #naturalHeight(el) {
+        const body = el.querySelector(".panel-body");
+        el.style.height = "auto";
+        return clamp(body.scrollHeight + el.offsetHeight - body.clientHeight, 160, innerHeight - 80);
+    }
+
+    // A size and spot for a note that would otherwise sit over what the user circled or another panel; each size is measured so all of the note shows, and it goes where the screen has the least on it.
+    #clearSpot(panel, target, others) {
+        const el = panel.el;
+        const view = { width: innerWidth, height: innerHeight };
+        const soft = this.avoid().filter((r) => r && r !== target).map(asRect);
+        for (const { widths, allow } of NOTE_TRIES) {
+            const sizes = widths.filter((w) => w <= innerWidth - 48).map((w) => (Object.assign(el.style, { width: `${w}px` }), [w, this.#naturalHeight(el)]));
+            const spot = noteSpot({ target: asRect(target), view, sizes: sizes.filter(([, h]) => h < innerHeight - 80), others, soft, ink: this.ink(), allow });
+            if (spot) return spot;
+        }
+        return null;
+    }
+
     // A note grows or shrinks to fit what it says, so nothing is cut off, and moves if it now needs a new spot.
     #fitHeight(panel) {
         const el = panel.el;
-        const body = el.querySelector(".panel-body");
         const previous = el.offsetHeight;
-        el.style.height = "auto";
-        const height = clamp(body.scrollHeight + el.offsetHeight - body.clientHeight, 160, innerHeight - 80);
+        const width = el.offsetWidth;
+        const height = this.#naturalHeight(el);
         el.style.height = `${height}px`;
         if (Math.abs(height - previous) < 2) return;
-        const spot = panel.autoPlaced ? this.#place(el.offsetWidth, height, panel, null, [1]) : { x: el.offsetLeft, y: el.offsetTop };
+        let spot = panel.autoPlaced ? this.#place(width, height, panel, null, [1]) : { x: el.offsetLeft, y: el.offsetTop };
+        const target = panel.autoPlaced && this.target();
+        if (target) {
+            const others = [...this.#panels.values()].filter((p) => p !== panel && p.el.isConnected && !p.el.classList.contains("away")).map((p) => asRect(p.el.getBoundingClientRect()));
+            if (crowds({ x: spot.x, y: spot.y, w: width, h: height }, asRect(target), others)) spot = this.#clearSpot(panel, target, others) ?? spot;
+        }
+        Object.assign(el.style, { width: `${spot.w ?? width}px`, height: `${spot.h ?? height}px` });
         el.style.left = `${clamp(spot.x, 16, innerWidth - el.offsetWidth - 16)}px`;
-        el.style.top = `${clamp(spot.y, 40, innerHeight - height - 16)}px`;
+        el.style.top = `${clamp(spot.y, 40, innerHeight - el.offsetHeight - 16)}px`;
         this.onLayout();
     }
 

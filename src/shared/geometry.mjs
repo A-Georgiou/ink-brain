@@ -160,6 +160,33 @@ export function stageSpot({ target, view, max, min, others = [], top = 52, margi
     return best && { x: best.x, y: best.y, w: best.w, h: best.h };
 }
 
+const boxOf = (r) => ({ x: r.x, y: r.y, w: r.w ?? r.width, h: r.h ?? r.height });
+
+// Whether a note at spot would hide the middle of the circled thing, more than the share allow of it, or a twentieth of its own size under others.
+export function crowds(spot, target, others = [], allow = 0.05) {
+    const [s, t] = [boxOf(spot), boxOf(target)];
+    return overlapArea(s, [{ x: t.x + t.w / 4, y: t.y + t.h / 4, w: t.w / 2, h: t.h / 2 }]) > 0 || overlapArea(s, [t]) > t.w * t.h * allow || overlapArea(s, others) > s.w * s.h * 0.05;
+}
+
+// Where a note goes, given the sizes it could take (each shows all of it): off the circled thing and the other panels, on the ground with the least on it, near the circled thing; null when nothing fits.
+export function noteSpot({ target, view, sizes, others = [], soft = [], ink = null, allow = 0.05, top = 52, margin = 24, step = 16 }) {
+    const t = boxOf(target);
+    const bottom = view.height - 16;
+    let best = null;
+    for (const [w, h] of sizes) {
+        if (h > bottom - top) continue;
+        for (let y = top; y + h <= bottom; y += step) {
+            for (let x = margin; x + w <= view.width - margin; x += step) {
+                const spot = { x, y, w, h };
+                if (crowds(spot, t, others, allow)) continue;
+                const cost = (ink ? ink(spot) * 100 : 0) + overlapArea(spot, soft) * 0.5 + Math.hypot(x + w / 2 - t.x - t.w / 2, y + h / 2 - t.y - t.h / 2) * 0.25;
+                if (!best || cost < best.cost) best = { ...spot, cost };
+            }
+        }
+    }
+    return best && { x: best.x, y: best.y, w: best.w, h: best.h };
+}
+
 // Where the w x h answer bubble goes: near the user's marks without covering them, drawings or panels, and where the screen is quiet when ink counts the cells with something in them under a box.
 export function bubbleSpot({ w, h, view, bottomInset, anchor = null, drawn = [], current = null, ink = null }) {
     const m = 16;
