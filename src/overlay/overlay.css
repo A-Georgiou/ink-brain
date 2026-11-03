@@ -270,13 +270,13 @@ body.thinking:not(.pen) #glow {
 .target-dot::before {
     content: "";
     position: absolute;
-    left: -6px;
-    top: -6px;
-    width: 12px;
-    height: 12px;
+    left: -8px;
+    top: -8px;
+    width: 10px;
+    height: 10px;
     border-radius: 50%;
-    background: var(--c, var(--accent));
-    box-shadow: 0 0 0 2.5px #fff, 0 0 12px var(--c, var(--accent));
+    border: 3px solid var(--c, var(--accent));
+    box-shadow: 0 0 0 1.5px #fff, inset 0 0 0 1.5px #fff, 0 0 12px var(--c, var(--accent));
     animation: pop 0.3s ease both;
     animation-delay: var(--delay, 0s);
 }

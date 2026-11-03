@@ -420,7 +420,7 @@ export class Annotations {
             nodes.push(el);
             duration = 0.55;
         } else if (kind === "underline") {
-            const y = shape.y + shape.h + 5;
+            const y = shape.y + shape.h + clamp(shape.h * 0.3, 2, 5);
             const points = Array.from({ length: 7 }, (_, i) => [shape.x - 4 + ((shape.w + 8) * i) / 6, y + Math.sin(i * 1.7 + seed) * 1.6]);
             duration = this.#ink(group, generator.curve(points, this.#opts(color, seed, { roughness: 1.5 })), delay);
         } else if (kind === "spotlight") {
