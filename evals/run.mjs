@@ -98,20 +98,21 @@ async function play(scenario, dir, { reader, client, replay = null }) {
         return (png ? image.toPNG() : image.toJPEG(90)).toString("base64");
     };
 
-    const surface = new Surface({
-        // Count a visual only once the overlay confirms it rendered, and show judges the early streaming view.
-        async overlayCall(method, params, timeoutMs) {
-            const result = await stage.call(method, params, timeoutMs);
-            if (VISUAL_CALLS.has(method) && result?.ok !== false) {
-                turn.firstVisual ??= elapsed();
-                if (record.firstVisual == null) {
-                    record.firstVisual = elapsed();
-                    snap("first visual", 120);
-                    snap("early visual", 4_000);
-                }
+    // Count a visual only once the overlay confirms it rendered, and show judges the early streaming view.
+    const overlayCall = async (method, params, timeoutMs) => {
+        const result = await stage.call(method, params, timeoutMs);
+        if (VISUAL_CALLS.has(method) && result?.ok !== false && result?.note !== "still rendering") {
+            turn.firstVisual ??= elapsed();
+            if (record.firstVisual == null) {
+                record.firstVisual = elapsed();
+                snap("first visual", 120);
+                snap("early visual", 4_000);
             }
-            return result;
-        },
+        }
+        return result;
+    };
+    const surface = new Surface({
+        overlayCall,
         geometry: () => GEOMETRY,
         config: CONFIG,
         async look({ region } = {}) {
@@ -132,13 +133,13 @@ async function play(scenario, dir, { reader, client, replay = null }) {
             if (!isRegion(args)) return { text: "live_cutout needs x, y, w and h.", failed: true };
             const id = cleanId(args.id) || "cutout";
             const file = saveCutout(path.join(workspace, "cutouts"), id, crop(args, true));
-            await stage.call("cutout", { id, image: `data:image/png;base64,${crop(args, true)}`, from: args, to: null, scale: 1.5, title: String(args.title ?? "").slice(0, 120) });
+            await overlayCall("cutout", { id, image: `data:image/png;base64,${crop(args, true)}`, from: args, to: null, scale: 1.5, title: String(args.title ?? "").slice(0, 120) });
             return { text: `Pulled the region out into the card "${id}". Saved as ${file}; give that path to image_generation as an input image to rework or re-render it.` };
         },
         async image(args) {
             const over = isRegion(args.over) ? args.over : null;
             const image = readImageFile(args.path, roots);
-            await stage.call("image", { id: cleanId(args.id) || "image", image, before: null, rect: panelRect(args, over, 1), frameless: Boolean(over), title: String(args.title ?? "").slice(0, 120) }, 20_000);
+            await overlayCall("image", { id: cleanId(args.id) || "image", image, before: null, rect: panelRect(args, over, 1), frameless: Boolean(over), title: String(args.title ?? "").slice(0, 120) }, 20_000);
             return { text: over ? "Showing the image over the region." : "Showing the image." };
         },
         control: async () => ({ text: "The user did not allow taking control this time.", failed: true }),
@@ -269,7 +270,8 @@ async function play(scenario, dir, { reader, client, replay = null }) {
                     // Replays the recorded words, streamed arguments and tool calls on their own clock, so only the runtime differs.
                     const pending = [];
                     for (const event of replayTimeline(past)) {
-                        await sleep(event.at - elapsed());
+                        const wait = event.at - elapsed();
+                        if (wait > 0) await sleep(wait);
                         if (event.kind === "text") append(event.text);
                         else if (event.kind === "input") input(event);
                         else if (OWN_TOOLS.has(event.tool.name) && event.tool.name !== "live_read") pending.push(runTool(event.tool.name, event.tool.args, event.tool.id));
