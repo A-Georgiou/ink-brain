@@ -3,6 +3,7 @@ const OLLAMA = "http://127.0.0.1:11434";
 
 export const PROVIDERS = {
     copilot: { label: "GitHub Copilot" },
+    chatgpt: { label: "ChatGPT", page: "https://chatgpt.com/settings/usage", prefer: ["gpt-6.1-terra"] },
     openai: { label: "OpenAI", env: "OPENAI_API_KEY", page: "https://platform.openai.com/api-keys", prefer: ["gpt-6.1-terra"] },
     anthropic: { label: "Claude", env: "ANTHROPIC_API_KEY", page: "https://console.anthropic.com/settings/keys", prefer: [/opus/, /sonnet/] },
     ollama: { label: "Ollama", page: "https://ollama.com/download" },

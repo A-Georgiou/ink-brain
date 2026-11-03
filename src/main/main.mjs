@@ -12,6 +12,7 @@ import { STANDALONE_TOOLS, TOOL_NAMES, toToolResult } from "../shared/live-tools
 import { SpeechChunker } from "../shared/speech.mjs";
 import { EmbeddedBrain, LinkedBrain, signInScript } from "./brain.mjs";
 import { Bridge } from "./bridge.mjs";
+import { chatgptModels, chatgptTokens, hostId, revokeChatGPT, signedOut, signInWithChatGPT, startAdapter } from "./chatgpt.mjs";
 import { CONFIG_DIR, CONFIG_PATH, CUTOUTS_DIR, DEFAULTS, MEMORY_DIR, MODELS_DIR, WORKSPACE_DIR, ensureConfigDir, loadConfig, saveConfig } from "./config.mjs";
 import { Controller } from "./control.mjs";
 import { ExplainPlayer, readingTime } from "./explain.mjs";
@@ -309,6 +310,10 @@ function runCommand(name, value) {
             return setProvider(String(value));
         case "saveKey":
             return saveKey(value);
+        case "continueWithChatGPT":
+            return continueWithChatGPT();
+        case "signOutChatGPT":
+            return signOutChatGPT();
         case "openProviderPage": {
             const page = PROVIDERS[String(value)]?.page;
             return page && shell.openExternal(page);
@@ -669,7 +674,7 @@ async function checkAnswer() {
         if (provider === "copilot") {
             const account = await embedded.account();
             Object.assign(answer, { ready: account.isAuthenticated, login: account.login ?? null });
-        } else answer.ready = true;
+        } else Object.assign(answer, { ready: true, login: provider === "chatgpt" ? (chatgptRecord()?.email ?? null) : null });
     } catch (error) {
         answer.detail = error.message;
     }
@@ -684,11 +689,21 @@ async function ownProvider() {
     const id = config.provider;
     if (id === "copilot" || !PROVIDERS[id]) return null;
     const { env, label } = PROVIDERS[id];
-    const key = env ? (secrets.get(id) ?? process.env[env]) : undefined;
-    if (env && !key) throw new Error(`Paste your ${label} API key to start. It stays encrypted on this Mac.`);
-    const models = await listModels(id, key);
+    let sdk;
+    let models;
+    if (id === "chatgpt") {
+        const token = await chatgptToken();
+        chatgptAdapter ??= await startAdapter({ token: chatgptToken });
+        sdk = { type: "openai", baseUrl: chatgptAdapter.url, wireApi: "responses", apiKey: chatgptAdapter.secret };
+        models = await chatgptModels(token);
+    } else {
+        const key = env ? (secrets.get(id) ?? process.env[env]) : undefined;
+        if (env && !key) throw new Error(`Paste your ${label} API key to start. It stays encrypted on this Mac.`);
+        sdk = sdkProvider(id, key);
+        models = await listModels(id, key);
+    }
     if (!models.length) throw new Error(id === "ollama" ? "Pull a model that can see images and use tools, then check again." : `Your ${label} account has no models that can see images.`);
-    return { id, sdk: sdkProvider(id, key), models };
+    return { id, sdk, models };
 }
 
 // Switches the built-in session to another provider, or checks the current one again.
@@ -713,6 +728,33 @@ async function saveKey({ provider, key } = {}) {
     await setProvider(provider);
 }
 
+// Signs in with ChatGPT in the browser, then answers with the user's ChatGPT plan.
+function continueWithChatGPT() {
+    chatgptSignIn ??= signInWithChatGPT({ hostId: hostId(path.join(CONFIG_DIR, "chatgpt-host")), saved: chatgptRecord(), open: (url) => shell.openExternal(url) })
+        .then((record) => {
+            saveChatgpt(record);
+            return setProvider("chatgpt");
+        })
+        .catch((error) => {
+            state.answer = { provider: "chatgpt", ready: false, detail: error.message, login: null, model: null, at: Date.now() };
+            pushState();
+        })
+        .finally(() => {
+            chatgptSignIn = null;
+        });
+    return chatgptSignIn;
+}
+
+// Signs out of ChatGPT, ending the session at OpenAI first.
+async function signOutChatGPT() {
+    const record = chatgptRecord();
+    if (!record) return;
+    const revoked = await revokeChatGPT(record);
+    saveChatgpt(signedOut(record));
+    await reconnect();
+    if (!revoked) toast("Signed out on this Mac, but OpenAI did not confirm it. You can also disconnect Ink Brain in ChatGPT settings.", "warn");
+}
+
 // A fresh connection picks up a new sign-in, key or provider.
 let reconnecting = null;
 function reconnect() {
@@ -726,6 +768,12 @@ function reconnect() {
 }
 
 const secrets = createSecrets(path.join(CONFIG_DIR, "keys"), safeStorage);
+// The saved ChatGPT sign-in, kept encrypted like API keys.
+const chatgptRecord = () => JSON.parse(secrets.get("chatgpt") ?? "null");
+const saveChatgpt = (record) => secrets.set("chatgpt", JSON.stringify(record));
+const chatgptToken = chatgptTokens({ load: chatgptRecord, save: saveChatgpt });
+let chatgptAdapter = null;
+let chatgptSignIn = null;
 const SIGNED_IN = path.join(CONFIG_DIR, "signed-in");
 let signInTimer = 0;
 

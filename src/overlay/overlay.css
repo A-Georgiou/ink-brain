@@ -517,6 +517,10 @@ body.speaking .orb {
     color: var(--muted);
 }
 
+#target {
+    max-width: 320px;
+}
+
 body.listening #prompt::placeholder {
     color: color-mix(in srgb, var(--accent) 80%, white);
 }
@@ -1158,7 +1162,13 @@ body.checking #bubble {
 
 #answer-with .providers {
     flex-wrap: wrap;
+    gap: 6px;
 }
+
+#answer-with .providers .chip {
+    padding: 5px 10px;
+}
+
 
 #answer-with [hidden] {
     display: none;

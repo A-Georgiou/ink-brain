@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
 import fs from "node:fs";
+import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { runInNewContext } from "node:vm";
+import { adaptRequest, API, chatgptTokens, signInWithChatGPT, startAdapter, verifyIdToken } from "../src/main/chatgpt.mjs";
 import { Memory } from "../src/main/memory.mjs";
 import { buildTurnPrompt } from "../src/main/prompt.mjs";
 import { listModels, pickModel } from "../src/main/providers.mjs";
@@ -481,4 +484,100 @@ test("API keys are kept encrypted in an owner-only file", () => {
     assert.doesNotMatch(fs.readFileSync(file, "utf8"), /sk-ant-secret/);
     assert.equal(fs.statSync(file).mode & 0o777, 0o600);
     assert.equal(secrets.get("anthropic"), "sk-ant-secret");
+});
+
+// A local stand-in for auth.openai.com: JWKS, and a token endpoint that records what it was sent.
+async function fakeOpenAIAuth() {
+    const { publicKey, privateKey } = crypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
+    const jwk = { ...publicKey.export({ format: "jwk" }), kid: "k1", alg: "RS256" };
+    const server = http.createServer();
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const issuer = `http://127.0.0.1:${server.address().port}`;
+    const sign = (claims) => {
+        const part = (value) => Buffer.from(JSON.stringify(value)).toString("base64url");
+        const body = `${part({ alg: "RS256", kid: "k1" })}.${part({ iss: issuer, exp: Math.floor(Date.now() / 1000) + 600, ...claims })}`;
+        return `${body}.${crypto.sign("RSA-SHA256", Buffer.from(body), privateKey).toString("base64url")}`;
+    };
+    const fake = { issuer, sign, exchanges: [], tokens: {} };
+    server.on("request", async (req, res) => {
+        if (req.url === "/.well-known/jwks.json") return res.end(JSON.stringify({ keys: [jwk] }));
+        let body = "";
+        for await (const chunk of req) body += chunk;
+        fake.exchanges.push(Object.fromEntries(new URLSearchParams(body)));
+        res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(fake.tokens));
+    });
+    fake.close = () => server.close();
+    return fake;
+}
+
+test("Continue with ChatGPT registers with PKCE once and keeps only a verified sign-in", async () => {
+    const auth = await fakeOpenAIAuth();
+    let authorize = null;
+    const open = async (url) => {
+        authorize = new URL(url).searchParams;
+        const callback = new URL(authorize.get("redirect_uri"));
+        assert.equal((await fetch(`${callback}?code=forged&state=wrong`)).status, 404);
+        const idToken = auth.sign({ aud: "oaiapp_1", nonce: authorize.get("nonce"), sub: "user-1", email: "me@example.com" });
+        auth.tokens = { id_token: idToken, access_token: "access-1", refresh_token: "refresh-1", expires_in: 3600, scope: "openid profile email offline_access resource.invoke chatgpt.tokens.use.direct" };
+        await fetch(`${callback}?code=code-1&state=${authorize.get("state")}&client_id=oaiapp_1`);
+    };
+
+    const record = await signInWithChatGPT({ hostId: "urn:uuid:host", open, auth: auth.issuer });
+    assert.equal(authorize.get("client_id"), "dynamic_agent_client");
+    assert.equal(authorize.get("agent_name_hint"), "Ink Brain");
+    assert.equal(authorize.get("ext_agent_host_id"), "urn:uuid:host");
+    assert.match(authorize.get("scope"), /chatgpt\.tokens\.use\.direct/);
+    const [exchange] = auth.exchanges;
+    assert.equal(exchange.client_id, "oaiapp_1");
+    assert.equal(exchange.redirect_uri, authorize.get("redirect_uri"));
+    assert.equal(exchange.resource, API);
+    assert.equal(crypto.createHash("sha256").update(exchange.code_verifier).digest("base64url"), authorize.get("code_challenge"));
+    assert.deepEqual([record.client_id, record.subject, record.email, record.access_token], ["oaiapp_1", "user-1", "me@example.com", "access-1"]);
+    const forged = auth.sign({ aud: "oaiapp_1", nonce: "another", sub: "user-1" });
+    await assert.rejects(verifyIdToken(forged, { issuer: auth.issuer, audience: "oaiapp_1", nonce: authorize.get("nonce") }), /could not be verified/);
+    auth.close();
+});
+
+test("the ChatGPT adapter forwards only this run's requests, reshaped for the plan route both ways", async () => {
+    const sent = [];
+    const events = [{ type: "response.output_item.done", item: { type: "function_call", name: "live_annotate", namespace: "ink_brain", call_id: "c2", arguments: "{}" } }, { type: "response.failed", response: { error: { code: "subscription_sharing_usage_limit_exceeded", message: "limit" } } }];
+    const upstream = async (url, init) => {
+        sent.push({ auth: init.headers.authorization, body: JSON.parse(init.body) });
+        if (sent.length === 1) return new Response("{}", { status: 401, headers: { "content-type": "application/json" } });
+        return new Response(events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""), { headers: { "content-type": "text/event-stream" } });
+    };
+    const adapter = await startAdapter({ token: async (force) => (force ? "access-2" : "access-1"), fetchImpl: upstream });
+    const body = { input: [{ type: "message", role: "system", content: "rules" }, { type: "function_call", name: "live_annotate", call_id: "c1", arguments: "{}" }], tools: [{ type: "function", name: "live_annotate", parameters: {} }] };
+    const post = (secret) => fetch(`${adapter.url}/responses`, { method: "POST", headers: { authorization: `Bearer ${secret}` }, body: JSON.stringify(body) });
+
+    assert.equal((await post("guess")).status, 404);
+    const reply = await (await post(adapter.secret)).text();
+    adapter.close();
+    assert.deepEqual(sent.map((request) => request.auth), ["Bearer access-1", "Bearer access-2"]);
+    const { input, tools, store, stream } = sent[1].body;
+    assert.deepEqual([input[0].role, input[1].namespace, store, stream], ["developer", "ink_brain", false, true]);
+    assert.deepEqual([tools[0].type, tools[0].tools.map((tool) => tool.name)], ["namespace", ["live_annotate"]]);
+    assert.doesNotMatch(reply, /"namespace"/);
+    assert.match(reply, /ChatGPT usage limit reached/);
+    assert.deepEqual(adaptRequest({ input: [], tools: [] }).tools, []);
+});
+
+test("ChatGPT tokens refresh one at a time and sign out when the refresh token is spent", async () => {
+    let record = { client_id: "oaiapp_1", subject: "user-1", access_token: "old", refresh_token: "r1", expires_at: Date.now(), scopes: ["chatgpt.tokens.use.direct"] };
+    let refreshes = 0;
+    let reply = { access_token: "new", refresh_token: "r2", expires_in: 3600 };
+    const fetchImpl = async (url, init) => {
+        refreshes++;
+        assert.equal(new URLSearchParams(init.body).get("grant_type"), "refresh_token");
+        return new Response(JSON.stringify(reply), { status: reply.error ? 400 : 200 });
+    };
+    const token = chatgptTokens({ load: () => record, save: (next) => (record = next), fetchImpl });
+
+    assert.deepEqual(await Promise.all([token(), token()]), ["new", "new"]);
+    assert.equal(refreshes, 1);
+    assert.equal(record.refresh_token, "r2");
+    reply = { error: "refresh_token_reused" };
+    await assert.rejects(token(true), /refresh_token_reused/);
+    assert.deepEqual(Object.keys(record).sort(), ["client_id", "email", "scopes", "subject"]);
+    await assert.rejects(token(), /Continue with ChatGPT/);
 });

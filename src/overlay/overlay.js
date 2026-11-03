@@ -153,7 +153,7 @@ api.on("live:state", (next) => {
     ink.enable(next.pen);
     $("#composer").classList.toggle("hidden", !next.pen);
     $("#hint").classList.toggle("hidden", !next.pen);
-    $("#target").textContent = `To: ${next.resolvedTarget}${next.target === "auto" ? " (auto)" : ""}`;
+    $("#target").textContent = `To: ${next.resolvedTarget}${next.target === "auto" ? " (auto)" : ""}${next.answer?.provider === "chatgpt" && next.resolvedTarget === "Ink Brain" ? ", using ChatGPT plan" : ""}`;
     $("#mic").classList.toggle("on", next.listening);
     $("#stay").classList.toggle("on", next.stayLive);
     prompt.placeholder = next.listening ? "Listening... circle or click anything and just talk" : "Circle or click anything, then ask";
@@ -637,6 +637,12 @@ const setup = (() => {
         } else if (action === "sign-in") {
             note.textContent = "Finish in the Terminal window that opened. This updates by itself.";
             api.command("signIn");
+        } else if (action === "chatgpt") {
+            note.textContent = "Finish signing in in your browser. This updates by itself.";
+            api.command("continueWithChatGPT");
+        } else if (action === "sign-out") {
+            note.textContent = "Signing out...";
+            api.command("signOutChatGPT");
         } else if (action === "check") {
             note.textContent = "Checking...";
             api.command("setProvider", provider);
@@ -666,14 +672,17 @@ const setup = (() => {
             chip.setAttribute("aria-checked", String(chip.dataset.provider === provider));
         }
         const keyed = KEYED[provider];
-        const ready = `${answer.login ? `Signed in as ${answer.login}.` : "Connected."} Answering with ${answer.model}.`;
-        note.textContent = answer.ready ? ready : (answer.detail ?? "Sign in to answer with your GitHub Copilot plan.");
+        const chatgpt = provider === "chatgpt";
+        const who = answer.login ? (chatgpt ? `You're using your ChatGPT plan as ${answer.login}.` : `Signed in as ${answer.login}.`) : "Connected.";
+        note.textContent = answer.ready ? `${who} Answering with ${answer.model}.` : (answer.detail ?? "Sign in to answer with your GitHub Copilot plan.");
         form.hidden = answer.ready || !keyed;
         input.placeholder = keyed ? `Paste your ${keyed} API key` : "";
         show("sign-in", provider === "copilot" && !answer.ready);
+        show("chatgpt", chatgpt && !answer.ready);
         show("check", provider === "ollama" && !answer.ready);
-        show("page", provider !== "copilot" && !answer.ready);
-        el.querySelector('[data-answer="page"]').textContent = provider === "ollama" ? "Get Ollama" : "Get a key";
+        show("page", chatgpt ? answer.ready : provider !== "copilot" && !answer.ready);
+        show("sign-out", chatgpt && answer.ready);
+        el.querySelector('[data-answer="page"]').textContent = chatgpt ? "Manage usage" : provider === "ollama" ? "Get Ollama" : "Get a key";
     }
     return {
         show: () => el.classList.remove("hidden"),

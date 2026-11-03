@@ -14,7 +14,10 @@ export function createSecrets(dir, crypto) {
         },
         set(name, value) {
             fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-            fs.writeFileSync(file(name), crypto.encryptString(value), { mode: 0o600 });
+            // Written beside the file, then renamed over it, so a crash never leaves half a credential.
+            const temp = `${file(name)}.${process.pid}.tmp`;
+            fs.writeFileSync(temp, crypto.encryptString(value), { mode: 0o600 });
+            fs.renameSync(temp, file(name));
         },
     };
 }

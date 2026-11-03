@@ -52,16 +52,19 @@
         <div id="answer-with">
             <div class="row providers" role="radiogroup" aria-label="Answer with">
                 <button type="button" class="chip" role="radio" data-provider="copilot">GitHub Copilot</button>
-                <button type="button" class="chip" role="radio" data-provider="openai">OpenAI</button>
+                <button type="button" class="chip" role="radio" data-provider="chatgpt">ChatGPT</button>
                 <button type="button" class="chip" role="radio" data-provider="anthropic">Claude</button>
+                <button type="button" class="chip" role="radio" data-provider="openai">OpenAI</button>
                 <button type="button" class="chip" role="radio" data-provider="ollama">Ollama</button>
             </div>
             <p class="answer-status small muted"></p>
             <form class="row answer-key" hidden><input type="password" autocomplete="off" spellcheck="false" aria-label="API key"><button type="submit" class="chip primary">Save</button></form>
             <div class="row">
                 <button type="button" class="chip" data-answer="sign-in" hidden>Sign in</button>
+                <button type="button" class="chip primary" data-answer="chatgpt" data-oai-siwc-button hidden>Continue with ChatGPT</button>
                 <button type="button" class="chip" data-answer="check" hidden>Check again</button>
                 <button type="button" class="chip" data-answer="page" hidden>Get a key</button>
+                <button type="button" class="chip" data-answer="sign-out" hidden>Sign out</button>
             </div>
         </div>
         <ul class="perm-list">
