@@ -657,7 +657,9 @@ body:not(.speaking):not(.thinking) .bubble-stop {
 }
 
 #bubble.minimized .bubble-question,
-#bubble.minimized .bubble-body {
+#bubble.minimized .bubble-body,
+#bubble.tucked:not(:hover) .bubble-question,
+#bubble.tucked:not(:hover) .bubble-body {
     display: none;
 }
 

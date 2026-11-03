@@ -283,7 +283,14 @@ function createBubble() {
     function place() {
         const drawn = [...annotations.rects(), ...panels.rects()];
         const view = { width: innerWidth, height: innerHeight };
-        const pick = bubbleSpot({ w: el.offsetWidth, h: el.offsetHeight, view, bottomInset: state.pen ? 150 : 110, anchor, drawn, current: slot });
+        const spot = () => bubbleSpot({ w: el.offsetWidth, h: el.offsetHeight, view, bottomInset: state.pen ? 150 : 110, anchor, drawn, current: slot });
+        el.classList.remove("tucked");
+        let pick = spot();
+        // A finished answer with nowhere to go but over a panel tucks down to its header; hovering it opens it again.
+        if (!active && overlapArea(pick.box, panels.rects()) > pick.box.w * pick.box.h * 0.08) {
+            el.classList.add("tucked");
+            pick = spot();
+        }
         slot = pick.name;
         // A bubble that was hidden appears in place; one already on screen glides to its new spot.
         el.classList.toggle("placing", jump);
