@@ -970,6 +970,15 @@ body:not(.speaking):not(.thinking) .bubble-stop {
     font-size: 16px;
 }
 
+#captions.docked.narrow {
+    padding: 6px 12px 8px;
+}
+
+#captions.docked.narrow .caption-text {
+    font-size: 14px;
+    line-height: 1.35;
+}
+
 /* ------------------------------------------------ setup and permission cards */
 
 #setup,

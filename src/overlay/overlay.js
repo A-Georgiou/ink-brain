@@ -375,8 +375,10 @@ const captions = (() => {
         Object.assign(el.style, { left: "", bottom: "", maxWidth: "" });
         const stage = scene && panels.rectOf(scene);
         el.classList.toggle("docked", Boolean(stage));
+        // A narrow stage gets smaller, wider subtitles, so they take fewer lines off the model.
+        el.classList.toggle("narrow", Boolean(stage) && stage.width < 600);
         if (stage) {
-            Object.assign(el.style, { left: `${Math.round(stage.left + stage.width / 2)}px`, bottom: `${Math.round(innerHeight - stage.bottom + 14)}px`, maxWidth: `${Math.round(stage.width - 48)}px` });
+            Object.assign(el.style, { left: `${Math.round(stage.left + stage.width / 2)}px`, bottom: `${Math.round(innerHeight - stage.bottom + 14)}px`, maxWidth: `${Math.round(stage.width - (stage.width < 600 ? 28 : 48))}px` });
             panels.inset(scene, el.classList.contains("hidden") ? 0 : el.offsetHeight + 22);
             return;
         }
