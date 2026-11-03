@@ -468,7 +468,8 @@ export const SCENARIOS = [
         url: DATA(`<!doctype html><html><head><title>Market Dispatch</title><style>body{font:16px -apple-system,sans-serif;margin:34px}article{max-width:920px}.paywall{margin-top:20px;padding:16px;background:#f4f4f6;border:1px solid #d6d6dc}</style></head><body><article id="story"><h1>Battery prices fall as supply chains recover</h1><p>Preview: analysts report lower lithium costs and improved shipping times in Q3.</p><div class="paywall">Subscribe to read the full analysis and regional forecasts.</div></article></body></html>`),
         locate: () => document.querySelector("#story"),
         ask: "summarize this article and tell me if the evidence is strong",
-        expect: ["read"],
+        // Its page is a data: URL that live_read cannot open, so marks on the preview are the visual it can give.
+        expect: ["annotate", "read"],
         points: [
             "it states only the visible preview claim about lower lithium costs and better shipping times",
             "it makes clear the full article is behind a paywall and cannot be verified from the visible page",
