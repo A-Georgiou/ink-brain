@@ -834,7 +834,8 @@ async function readWeb(args) {
     // Asking keeps every navigation on approved sites; otherwise a page may redirect anywhere on the web.
     const allowed = asking ? (target) => siteAllowed(target, [...granted, ...config.webSites]) : (target) => Boolean(siteOf(target));
     try {
-        return { text: describePage(await reader.read(url, { allowed }), { from: args.from }) };
+        const page = await reader.read(url, { allowed, refresh: args.refresh === true });
+        return { text: describePage(page, { from: args.from, find: args.find }), ...(page.image ? { images: [page.image] } : {}) };
     } catch (error) {
         return { text: `Could not read ${url}: ${error.message}. Answer from what is on screen.`, failed: true };
     }

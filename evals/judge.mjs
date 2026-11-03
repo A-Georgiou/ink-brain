@@ -52,7 +52,7 @@ export function describeTool(tool) {
         live_explain: () => `"${a.title ?? ""}", ${count(a.steps)} narrated steps on ${a.board ? `a board of ${count(a.board.elements)} elements` : a.scene ? `a 3D scene of ${count(a.scene.objects)} objects` : "the screen"}`,
         live_panel: () => `${a.kind} panel "${a.title ?? ""}"${a.kind === "scene" ? ` of ${count(a.scene?.objects)} objects` : a.kind === "board" ? ` of ${count(a.board?.elements)} elements` : ""}`,
         live_annotate: () => (a.shapes ?? []).map((s) => `${s.kind}${s.text ? ` "${s.text}"` : ""}`).join(", "),
-        live_read: () => a.url,
+        live_read: () => [a.url, a.find && `finding "${a.find}"`, Number.isFinite(a.from) && `from character ${a.from}`].filter(Boolean).join(", "),
         live_look: () => (isRegion(a.region) ? "zoomed in" : "full screen"),
         live_check: () => `check "${a.question ?? ""}" (${count(a.choices)} choices)`,
     }[tool.name];

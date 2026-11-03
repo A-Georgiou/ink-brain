@@ -687,14 +687,16 @@ export const SPEAK_TOOL = {
 export const READ_TOOL = {
     name: "live_read",
     description:
-        "Read a web page in the background, as a signed-out browser shows it, without touching the user's screen. Returns its text and the links in it. " +
+        "Read a web page, text PDF or published video captions in the background, signed out, without touching the user's screen. Returns text, source links, sections, PDF page numbers or caption timestamps when available. " +
         "Use it whenever the answer depends on more than the screen shows: the article, paper or video behind a link or headline, the rest of a thread with its answers, or current facts such as versions, releases and news. " +
-        "You can also search a site for the thing the user pointed at and read the best result.",
+        "Follow returned links if the first page does not answer the question; use find to target a section, table or phrase on a long source. For exact PDF tables and figures, read its URL with #page=N to attach that page image. Pages are reused for one minute unless refresh is true. A video page without captions is not evidence of what the video says.",
     parameters: {
         type: "object",
         properties: {
             url: { type: "string", description: "Full http(s) address: from the address bar or a visible link, a search page, or a link returned by an earlier live_read." },
             from: { type: "number", description: "Where to start on a long page: the character offset a cut-off read gave you." },
+            find: { type: "string", description: "Jump to a section heading or exact phrase, such as a table caption, API name or quoted sentence. Searches the whole source, beyond the first excerpt." },
+            refresh: { type: "boolean", description: "Fetch again instead of reusing a page read within the last minute, for example after a live update." },
         },
         required: ["url"],
     },

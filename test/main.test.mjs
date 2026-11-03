@@ -3,10 +3,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
+import { runInNewContext } from "node:vm";
 import { Memory } from "../src/main/memory.mjs";
 import { buildTurnPrompt } from "../src/main/prompt.mjs";
 import { resolveAppPath } from "../src/main/routes.mjs";
-import { describePage, siteAllowed, siteOf } from "../src/main/reader.mjs";
+import { extractPdf, parseCaptions } from "../src/main/reader-formats.mjs";
+import { describePage, Reader, siteAllowed, siteOf } from "../src/main/reader.mjs";
 import { Surface } from "../src/main/surface.mjs";
 
 const geometry = { modelWidth: 1512, modelHeight: 982, scale: 1 };
@@ -52,6 +54,218 @@ test("long pages are read in parts, each saying where the next one starts", () =
     const rest = describePage(page, { from: 12_000 });
     assert.match(rest, /\[from character 12000\]\nb{5000}\n<\/page>/);
     assert.doesNotMatch(rest, /cut off/);
+});
+
+test("targeted reads find a later section and preserve versioned source and fragment links", () => {
+    const page = {
+        title: "Versioned guide",
+        url: "https://example.com/guide?version=3#cancellation",
+        text: `Contents\nTask cancellation\n${"Introduction.\n".repeat(1500)}\nTask cancellation\nUse try/finally to clean up, then propagate CancelledError.`,
+        sections: ["Task cancellation"],
+        links: [{ text: "PDF", href: "https://example.com/guide.pdf" }, { text: "Cleanup", href: "https://example.com/guide?version=3#cancellation" }],
+    };
+    const read = describePage(page, { find: "task cancellation" });
+    assert.match(read, /version=3#cancellation/);
+    assert.match(read, /Use try\/finally to clean up, then propagate CancelledError/);
+    assert.match(read, /PDF -> https:\/\/example.com\/guide.pdf/);
+    assert.match(read, /Cleanup -> https:\/\/example.com\/guide\?version=3#cancellation/);
+    assert.doesNotMatch(read, /Contents/);
+    assert.match(describePage(page, { find: "missing example" }), /No match for "missing example"/);
+    const credentialed = describePage({ ...page, url: "https://person:secret@example.com/guide?version=3" });
+    assert.match(credentialed, /at https:\/\/example.com\/guide\?version=3/);
+    assert.doesNotMatch(credentialed, /person|secret/);
+});
+
+test("published captions keep real timestamps and speech, not cue markup or metadata", () => {
+    const source = "WEBVTT\n\nNOTE not spoken\nignore this\n\nintro\n00:01:31.870 --> 00:01:37.230 align:start\n<v Strang>First, the <b>row</b> picture\n&amp; one equation.</v>\n\n00:01:37.230 --> 00:01:40.870\nFirst, the row picture & one equation.\n\n01:49.460 --> 01:55.070\nThe column picture.\n";
+    assert.equal(parseCaptions(source), "[00:01:31] First, the row picture & one equation.\n[00:01:49] The column picture.");
+    assert.equal(parseCaptions("A video description, not a transcript."), "");
+});
+
+function readerWithFetch(fetch, BrowserWindow) {
+    const ses = {
+        fetch,
+        setUserAgent() {},
+        setPermissionRequestHandler() {},
+        setPermissionCheckHandler() {},
+        on() {},
+        webRequest: { onBeforeRequest() {} },
+    };
+    return new Reader({ BrowserWindow, session: { fromPartition: () => ses }, userAgent: "test" });
+}
+
+test("caption reads coalesce and cache, but refresh and permission changes are respected", async () => {
+    let calls = 0;
+    const caches = [];
+    const reader = readerWithFetch(async (_url, options) => {
+        calls++;
+        caches.push(options.cache);
+        return new Response("WEBVTT\n\n00:01:00.000 --> 00:01:05.000\nA sourced result.\n");
+    });
+    const url = "https://example.com/lecture.vtt";
+    const options = { allowed: () => true };
+    const reads = await Promise.all([reader.read(url, options), reader.read(url, options)]);
+    assert.equal(calls, 1);
+    assert.match(reads[0].text, /\[00:01:00\] A sourced result/);
+    await reader.read(url, options);
+    assert.equal(calls, 1);
+    await reader.read(url, { ...options, refresh: true });
+    assert.equal(calls, 2);
+    assert.deepEqual(caches, ["default", "no-store"]);
+    await assert.rejects(reader.read(url, { allowed: () => false }), /not allowed/);
+    assert.equal(calls, 2);
+    let granted = true;
+    let finish;
+    const pending = readerWithFetch(() => new Promise((resolve) => (finish = resolve))).read(url, { allowed: () => granted });
+    granted = false;
+    finish(new Response("WEBVTT\n\n00:00:00.000 --> 00:00:01.000\nRevoked source.\n"));
+    await assert.rejects(pending, /not allowed/);
+});
+
+test("PDF and caption redirects never fetch another site without its approval", async () => {
+    const requests = [];
+    const reader = readerWithFetch(async (url, options) => {
+        requests.push(url);
+        assert.equal(options.redirect, "manual");
+        return url.startsWith("https://other.example")
+            ? new Response("WEBVTT\n\n00:01:00.000 --> 00:01:05.000\nAnother site's transcript.\n")
+            : new Response(null, { status: 302, headers: { location: "https://other.example/lecture.vtt" } });
+    });
+    const page = await reader.read("https://example.com/lecture.vtt", { allowed: (url) => siteAllowed(url, ["example.com"]) });
+    assert.deepEqual(requests, ["https://example.com/lecture.vtt"]);
+    assert.equal(page.elsewhere, "https://other.example/lecture.vtt");
+    assert.equal(page.text, "");
+    const pdf = await reader.read("https://example.com/paper.pdf", { allowed: (url) => siteAllowed(url, ["example.com"]) });
+    assert.equal(pdf.elsewhere, "https://other.example/lecture.vtt");
+    assert.equal(pdf.text, "");
+    const approved = await reader.read("https://example.com/lecture.vtt", { allowed: () => true });
+    assert.match(approved.text, /Another site's transcript/);
+    const revoked = await reader.read("https://example.com/lecture.vtt", { allowed: (url) => siteAllowed(url, ["example.com"]) });
+    assert.equal(revoked.text, "");
+    assert.equal(requests.filter((url) => url.startsWith("https://other.example")).length, 1);
+});
+
+test("a slower earlier read cannot replace a refreshed page in the cache", async () => {
+    let finish;
+    let calls = 0;
+    const response = (text) => new Response(`WEBVTT\n\n00:00:00.000 --> 00:00:01.000\n${text}\n`);
+    const reader = readerWithFetch(() => (++calls === 1 ? new Promise((resolve) => (finish = resolve)) : Promise.resolve(response("new result"))));
+    const url = "https://example.com/live.vtt";
+    const older = reader.read(url, { allowed: () => true });
+    const newer = await reader.read(url, { allowed: () => true, refresh: true });
+    finish(response("old result"));
+    await older;
+    assert.equal(await reader.read(url, { allowed: () => true }), newer);
+    assert.match(newer.text, /new result/);
+});
+
+test("oversized and failed transcript reads are rejected, not cached", async () => {
+    const responses = [
+        new Response("too large", { headers: { "content-length": "2000001" } }),
+        new Response("unavailable", { status: 503 }),
+        new Response("WEBVTT\n\n00:00:00.000 --> 00:00:01.000\nRecovered source.\n"),
+    ];
+    const reader = readerWithFetch(async () => responses.shift());
+    const url = "https://example.com/lecture.vtt";
+    const options = { allowed: () => true };
+    await assert.rejects(reader.read(url, options), /too large/);
+    await assert.rejects(reader.read(url, options), /HTTP 503/);
+    assert.match((await reader.read(url, options)).text, /Recovered source/);
+});
+
+test("a player that removes track elements still exposes its published captions without bypassing site approval", async () => {
+    const captionUrl = "https://captions.example/lecture.vtt";
+    const root = { innerText: "Lecture description. ".repeat(20), querySelectorAll: () => [] };
+    class VideoWindow {
+        destroyed = false;
+        webContents = {
+            setAudioMuted() {},
+            setWindowOpenHandler() {},
+            on() {},
+            async loadURL() {},
+            isLoading: () => false,
+            executeJavaScriptInIsolatedWorld: async (_world, [{ code }]) =>
+                runInNewContext(code, {
+                    document: {
+                        body: root,
+                        title: "Lecture",
+                        querySelectorAll: (selector) => (selector.startsWith("script") ? [{ textContent: "{" }, { textContent: '{"@graph":[null,{"@type":"NewsArticle","datePublished":"2026-11-02T06:18:34Z"}]}' }] : []),
+                        querySelector: (selector) => (selector.startsWith("video,") ? {} : null),
+                    },
+                    location: { href: "https://example.com/lecture" },
+                    performance: { getEntriesByType: () => [{ name: captionUrl }, { name: captionUrl }] },
+                }),
+        };
+        isDestroyed() {
+            return this.destroyed;
+        }
+        destroy() {
+            this.destroyed = true;
+        }
+    }
+    let requests = 0;
+    const reader = readerWithFetch(async () => {
+        requests++;
+        return new Response("WEBVTT\n\n00:01:31.870 --> 00:01:37.230\nThe row picture.\n");
+    }, VideoWindow);
+    const blocked = await reader.read("https://example.com/lecture", { allowed: (url) => siteAllowed(url, ["example.com"]) });
+    assert.equal(requests, 0);
+    assert.match(blocked.mediaNote, /not the video/);
+    const page = await reader.read("https://example.com/lecture", { allowed: () => true, refresh: true });
+    assert.equal(requests, 1);
+    assert.equal(page.transcript.url, captionUrl);
+    assert.match(page.text, /\[00:01:31\] The row picture/);
+    assert.ok(page.text.indexOf("[00:01:31]") < page.text.indexOf("Lecture description."));
+    assert.match(describePage(page), /Source publication time \(page metadata\): 2026-11-02T06:18:34Z/);
+});
+
+function textPdf(pages) {
+    const objects = ["<< /Type /Catalog /Pages 2 0 R >>", `<< /Type /Pages /Count ${pages.length} /Kids [${pages.map((_, i) => `${3 + i * 2} 0 R`).join(" ")}] >>`];
+    for (const [i, text] of pages.entries()) {
+        const content = `BT /F1 14 Tf 50 700 Td (${text}) Tj ET`;
+        objects.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 ${3 + pages.length * 2} 0 R >> >> /Contents ${4 + i * 2} 0 R >>`, `<< /Length ${content.length} >>\nstream\n${content}\nendstream`);
+    }
+    objects.push("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
+    let source = "%PDF-1.4\n";
+    const offsets = [0];
+    for (const [i, object] of objects.entries()) {
+        offsets.push(source.length);
+        source += `${i + 1} 0 obj\n${object}\nendobj\n`;
+    }
+    const xref = source.length;
+    source += `xref\n0 ${offsets.length}\n0000000000 65535 f \n${offsets.slice(1).map((n) => `${String(n).padStart(10, "0")} 00000 n \n`).join("")}trailer\n<< /Size ${offsets.length} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+    return Buffer.from(source);
+}
+
+test("PDF text is grounded to pages and unreadable PDFs fail explicitly", { skip: process.platform !== "darwin" }, async () => {
+    const bytes = textPdf(["First page evidence", "Second page result"]);
+    let requests = 0;
+    const reader = readerWithFetch(async () => {
+        requests++;
+        return new Response(bytes);
+    });
+    const url = "https://example.com/paper.pdf";
+    const options = { allowed: () => true };
+    const page = await reader.read(url, options);
+    assert.equal(page.pageCount, 2);
+    assert.match(page.text, /\[Page 1\]\nFirst page evidence/);
+    assert.match(page.text, /\[Page 2\]\nSecond page result/);
+    const detail = await reader.read(`${url}#page=2`, options);
+    assert.equal(detail.pageNumber, 2);
+    assert.equal(detail.image.mimeType, "image/jpeg");
+    assert.equal(Buffer.from(detail.image.data, "base64").subarray(0, 2).toString("hex"), "ffd8");
+    assert.match(detail.text, /\[Page 2\]\nSecond page result/);
+    assert.doesNotMatch(detail.text, /First page evidence/);
+    assert.equal(await reader.read(url, options), page);
+    assert.equal(await reader.read(`${url}#page=2`, options), detail);
+    assert.equal(requests, 2);
+    await assert.rejects(reader.read(`${url}#page=0`, options), /positive whole number/);
+    await assert.rejects(reader.read(`${url}#page=3`, options), /only 2 pages/);
+    await assert.rejects(extractPdf(textPdf([""])), /no extractable text/);
+    assert.ok((await extractPdf(textPdf([""]), { page: 1 })).image);
+    const scanned = await readerWithFetch(async () => new Response(textPdf([""]))).read(url, options);
+    assert.equal(scanned.pageNumber, 1);
+    assert.ok(scanned.image);
 });
 
 function surfaceWith(overlayResult = null) {

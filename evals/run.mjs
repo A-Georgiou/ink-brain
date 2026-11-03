@@ -147,7 +147,8 @@ async function play(scenario, dir, { reader, client, replay = null }) {
             const url = String(args.url ?? "").trim();
             if (!siteOf(url)) return { text: "live_read needs a full http or https address.", failed: true };
             try {
-                return { text: describePage(await reader.read(url, { allowed: () => true }), { from: args.from }) };
+                const page = await reader.read(url, { allowed: () => true, refresh: args.refresh === true });
+                return { text: describePage(page, { from: args.from, find: args.find }), ...(page.image ? { images: [page.image] } : {}) };
             } catch (error) {
                 return { text: `Could not read ${url}: ${error.message}. Answer from what is on screen.`, failed: true };
             }
