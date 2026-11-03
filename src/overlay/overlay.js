@@ -522,7 +522,7 @@ api.on("live:turn", (event) => {
         // Every turn, however it was asked, keeps new panels off what the user marked; a follow-up without marks is still about it.
         lastAnchor = event.anchor ?? lastAnchor;
         pages.beginTurn(event.anchor);
-        bubble.start(event);
+        bubble.start({ ...event, anchor: lastAnchor });
         dockText("");
     } else if (event.type === "delta") bubble.append(event.text);
     else if (event.type === "tool") bubble.activity(toolLabel(event.name));
