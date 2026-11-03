@@ -335,9 +335,9 @@ const BOARD_ELEMENT = {
                 "axes, plot (the graph of fn on axes), area (the region between fn, or the plot it is on, and lower, across domain; bars makes it Riemann rectangles), dot, vector (an arrow from the origin of axes), tangent (a line touching a plot at x).",
         },
         at: pair("Its centre: board units, or maths coordinates when it is on axes. Numbers can be expressions of vars, such as \"a\" or \"2*a\", so set moves it."),
-        tex: { type: "string", description: "tex, box: LaTeX. Wrap a term in \\part{name}{...} to point at it later as id.name, and write \\val{name} to show a variable's live value." },
+        tex: { type: "string", description: "tex, box: LaTeX. Wrap a term in \\part{name}{...} to point at it later as id.name, and write \\val{name} or \\val{expr} (such as \\val{2+h}) to show a live value as vars animate." },
         text: { type: "string", description: "text, box: plain words." },
-        size: { type: "number", description: "Text height in board units (tex 0.6, text 0.42, labels 0.42)." },
+        size: { type: "number", description: "Text height in board units (tex 0.6, text 0.44, labels 0.45)." },
         align: { type: "string", enum: ["left", "center", "right"] },
         font: { type: "string", enum: ["serif", "sans"], description: "text: serif (default) matches the maths." },
         width: { type: "number", description: "box, axes: width in board units. text: the width it wraps at." },
@@ -347,7 +347,7 @@ const BOARD_ELEMENT = {
         to: { description: "line, arrow, vector, brace: [x, y], or the id or id.part of an element to attach to." },
         bend: { type: "number", description: "line, arrow: curvature, about -1 to 1." },
         points: { type: "array", items: pair("[x, y]"), maxItems: 200, description: "path: its points." },
-        curve: { type: "boolean", description: "path: false for straight segments." },
+        curve: { type: "boolean", description: "path: smooth curve through points (default true for open paths, false for closed polygons)." },
         closed: { type: "boolean" },
         fill: { type: "boolean", description: "circle, path: fill it. box: false leaves it unfilled." },
         of: { type: "string", description: "brace: the element or id.part it spans." },
@@ -358,7 +358,7 @@ const BOARD_ELEMENT = {
         y: { type: "array", items: { type: "number" }, maxItems: 3, description: "axes: [min, max, step] of the y axis." },
         grid: { type: "boolean", description: "axes: draw a grid." },
         numbers: { type: "boolean", description: "axes: false hides the tick numbers." },
-        on: { type: "string", description: "plot, area, dot, vector, tangent, path, line, arrow: the axes (or plot) it sits on; its coordinates are then maths coordinates." },
+        on: { type: "string", description: "plot, area, dot, vector, tangent, path, line, arrow, circle, box, tex, text, brace: the axes (or plot) it sits on; its coordinates are then maths coordinates." },
         fn: {
             type: "string",
             description: "plot, area: y as an expression of x and vars, such as \"a*sin(x)\", \"x^2 - 1\" or \"exp(-x^2/2)\" (functions sin, cos, tan, exp, ln, log, sqrt, abs, min, max; constants pi and e).",
@@ -413,10 +413,10 @@ const BOARD_PROPERTIES = {
         maxItems: 100,
         items: BOARD_ELEMENT,
         description:
-            "The board is 16 by 9 units with the origin in the middle and y up; keep everything within x -7.5 to 7.5 and y -4.2 to 4.2, and use the whole board, with the main idea in the middle. " +
+            "The board is 16 by 9 units with the origin in the middle and y up; keep everything within x -7.5 to 7.5 and y -3.8 to 3.8, and use the whole board, with the visual diagram or axes on one side and the equations on the other. " +
             "Text never covers earlier text or boxes (it steps aside instead), so give each line its own row.",
     },
-    vars: { type: "object", additionalProperties: { type: "number" }, description: "Named numbers that fn, at, x, domain, bars and \\val can use; set animates them." },
+    vars: { type: "object", additionalProperties: { type: "number" }, description: "Named numbers that fn, at, x, r, domain, bars and \\val can use; set animates them." },
 };
 
 const PANEL_PROPERTIES = {
@@ -489,7 +489,7 @@ export const EXPLAIN_TOOL = {
         "Teach like a tutor at a whiteboard: a narrated explanation whose steps are spoken one by one while their visuals build up. Use it for how and why questions, walkthroughs and whenever the user is confused, " +
         "with 2 to 8 short steps that build on each other. A step can sketch on the screen (draw; re-send a diagram with the same id and more nodes to grow it), open a panel, or animate the explanation's stage: " +
         "a board, a 2D motion graphic in the style of 3Blue1Brown for maths, formulas, algorithms and dense text, or a scene, a 3D stage for physical things (one stage per explanation). " +
-        "It returns when the narration finishes or the user interrupts; then reply with at most one short sentence, since the explanation was already spoken. " +
+        "It returns when the narration finishes or the user interrupts; then reply with at most one short closing sentence that does not repeat your opening words, since the explanation was already spoken. " +
         "Pass the id it gives back to carry on with that same stage on a later turn: more steps play on the model or picture that is already there, rather than opening another beside it.",
     parameters: {
         type: "object",
