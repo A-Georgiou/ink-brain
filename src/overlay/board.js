@@ -200,6 +200,7 @@ function build(spec, world, katex) {
         let node = item.labels[key];
         if (!node) {
             node = item.labels[key] = element("div", "board-tex", layer);
+            node.dataset.boardId = item.def.id;
             node.style.fontSize = `${num(item.def.size, 0.45) * UNIT}px`;
             node.style.color = item.textColor ?? item.color;
             item.nodes.push(node);
@@ -217,6 +218,7 @@ function build(spec, world, katex) {
     const textNode = (item, source, tex, size) => {
         const wrap = item.def.width && item.def.type === "text";
         const node = element("div", tex ? "board-tex" : `board-text${item.def.font === "sans" ? " sans" : ""}${wrap ? " wrap" : ""}`, layer);
+        node.dataset.boardId = item.def.id;
         node.style.fontSize = `${size * UNIT}px`;
         if (wrap) node.style.width = `${item.def.width * UNIT}px`;
         (tex ? setTex : setText)(node, source);
@@ -528,7 +530,10 @@ function build(spec, world, katex) {
         },
     };
 
-    const itemOf = (def, color, width, opacity = 1) => ({ def, g: svgNode("g", { color }, svg), nodes: [], offset: [0, 0], nudge: [0, 0], push: [0, 0], pulse: 1, opacity, shown: false, color, width });
+    const itemOf = (def, color, width, opacity = 1) => ({
+        def, g: svgNode("g", { color, "data-board-id": def.id, "data-board-type": def.type, "data-board-from": typeof def.from === "string" ? def.from.split(".")[0] : undefined, "data-board-to": typeof def.to === "string" ? def.to.split(".")[0] : undefined, "data-board-on": def.on }, svg),
+        nodes: [], offset: [0, 0], nudge: [0, 0], push: [0, 0], pulse: 1, opacity, shown: false, color, width,
+    });
     const add = (def, index) => {
         const neutral = TEXT_TYPES.has(def.type) ? "#ECECEC" : ["axes", "line", "arrow", "brace"].includes(def.type) ? "#C9D1D9" : null;
         const color = paint(def.color, neutral ?? CYCLE[index % CYCLE.length]);
@@ -723,6 +728,7 @@ function build(spec, world, katex) {
         item.settle?.();
         const old = item.node;
         const fresh = element("div", old.className, layer);
+        fresh.dataset.boardId = item.def.id;
         fresh.style.cssText = old.style.cssText;
         if (old.dataset.anchor !== undefined) fresh.dataset.anchor = old.dataset.anchor;
         setTex(fresh, source);

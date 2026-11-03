@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { BrowserWindow, ipcMain } from "electron";
 import { pageTitle } from "../src/shared/anchors.mjs";
+import { auditBoard } from "./board-audit.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const SCREEN = { width: 1512, height: 982 };
@@ -35,7 +36,30 @@ function boardCheck() {
             overlaps.push(`${a.name} x ${b.name}`);
         }
     }
-    return { overlaps, off: texts.filter((t) => t.x < -8 || t.y < -8 || t.x + t.w > 1608 || t.y + t.h > 908).map((t) => t.name) };
+    const groups = [...document.querySelectorAll(".board-cam svg g[data-board-id]")].filter(shown);
+    const nodes = groups.flatMap((g) => {
+        const shape = { box: "rect[data-fill]", circle: "circle[data-fill]" }[g.dataset.boardType];
+        const node = shape && g.querySelector(shape);
+        return node ? [{ id: g.dataset.boardId, shape: g.dataset.boardType, ...toBoard(node.getBoundingClientRect()) }] : [];
+    });
+    const written = [...layer.children].filter((n) => n.dataset.boardId && shown(n) && n.getBoundingClientRect().width).map((n) => ({ id: n.dataset.boardId, ...toBoard(n.getBoundingClientRect()) }));
+    const edges = groups.filter((g) => ["line", "arrow"].includes(g.dataset.boardType) && !g.dataset.boardOn).flatMap((g) => {
+        const path = g.querySelector("path[stroke]");
+        const matrix = path?.getScreenCTM();
+        if (!matrix) return [];
+        try {
+            const length = path.getTotalLength();
+            const count = Math.max(1, Math.min(300, Math.ceil(length / 12)));
+            const points = Array.from({ length: count + 1 }, (_, i) => {
+                const p = path.getPointAtLength((length * i) / count);
+                return [(p.x * matrix.a + p.y * matrix.c + matrix.e - frame.left) / k, (p.x * matrix.b + p.y * matrix.d + matrix.f - frame.top) / k];
+            });
+            return [{ id: g.dataset.boardId, from: g.dataset.boardFrom, to: g.dataset.boardTo, points }];
+        } catch {
+            return [];
+        }
+    });
+    return { overlaps, off: texts.filter((t) => t.x < -8 || t.y < -8 || t.x + t.w > 1608 || t.y + t.h > 908).map((t) => t.name), geometry: { nodes, texts: written, edges } };
 }
 
 // Runs in each panel frame: whether its 3D view has lost its WebGL context, which leaves the panel blank.
@@ -105,7 +129,8 @@ export async function openStage({ image, title, onConsole }) {
             if (win.isDestroyed()) return null;
             const [image, placed] = await Promise.all([win.webContents.capturePage(), win.webContents.executeJavaScript(`(${layout})()`).catch(() => null)]);
             const frames = win.webContents.mainFrame.framesInSubtree.filter((f) => f.url.includes("sandbox.html"));
-            const boards = (await Promise.all(frames.map((f) => f.executeJavaScript(`(${boardCheck})()`).catch(() => null)))).filter(Boolean);
+            const checks = (await Promise.all(frames.map((f) => f.executeJavaScript(`(${boardCheck})()`).catch(() => null)))).filter(Boolean);
+            const boards = checks.map(({ geometry, ...check }) => ({ ...check, ...auditBoard(geometry) }));
             const lost = (await Promise.all(frames.map((f) => f.executeJavaScript(`(${glLost})()`).catch(() => false)))).some(Boolean);
             return { jpeg: image.toJPEG(82), layout: placed, boards, lost };
         },

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { auditBoard } from "../evals/board-audit.mjs";
 import { conversationMetrics, marksFor, pickFrames, turnsOf } from "../evals/conversation.mjs";
 import { judgeDisagreement, limitsFor, overall, passes } from "../evals/judge.mjs";
 import { latencyMetrics, replayTimeline } from "../evals/latency.mjs";
@@ -203,4 +204,37 @@ test("stream replays keep text, argument deltas and their matching tool call in 
     const tool = { id: "c1", name: "live_explain", at: 30, args: {} };
     const timeline = [{ kind: "input", at: 20, id: "c1", delta: "{}" }, { kind: "text", at: 10, text: "Look" }];
     assert.deepEqual(replayTimeline({ timeline, tools: [tool] }), [timeline[1], timeline[0], { kind: "tool", at: 30, tool }]);
+});
+
+test("diagram checks find overlapping nodes, overflowing box text and edges crossing unrelated content", () => {
+    const nodes = [
+        { id: "a", shape: "box", x: 0, y: 0, w: 100, h: 60 },
+        { id: "b", shape: "box", x: 90, y: 0, w: 100, h: 60 },
+        { id: "c", shape: "box", x: 250, y: 0, w: 100, h: 60 },
+    ];
+    const texts = [{ id: "a", x: -8, y: 10, w: 110, h: 20 }, { id: "caption", x: 200, y: 20, w: 30, h: 20 }];
+    const edges = [{ id: "link", from: "a", to: "c", points: [[80, 30], [250, 30]] }];
+    assert.deepEqual(auditBoard({ nodes, texts, edges }), {
+        nodeOverlaps: ["a x b"],
+        boxTextOverflow: ["a"],
+        edgeNodeCrossings: ["link x b"],
+        edgeTextCrossings: ["link x caption"],
+    });
+});
+
+test("diagram checks allow endpoints, intentional frames and clear paths", () => {
+    const nodes = [
+        { id: "frame", shape: "box", x: 0, y: 0, w: 300, h: 200 },
+        { id: "start", shape: "circle", x: 20, y: 20, w: 50, h: 50 },
+        { id: "end", shape: "circle", x: 200, y: 20, w: 50, h: 50 },
+    ];
+    const texts = [{ id: "frame", x: 80, y: 120, w: 100, h: 20 }];
+    const edges = [{ id: "route", points: [[45, 45], [225, 45]] }];
+    assert.deepEqual(auditBoard({ nodes, texts, edges }), { nodeOverlaps: [], boxTextOverflow: [], edgeNodeCrossings: [], edgeTextCrossings: [] });
+});
+
+test("diagram geometry defects cap visual quality and obstructed structure", () => {
+    const points = [{ said: "yes", shown: "yes" }, { said: "yes", shown: "yes" }, { said: "yes", shown: "yes" }];
+    const limits = limitsFor(run("diagram", { boardEdgeNodeCrossings: 1, boardTextOverflow: 1 }), { points });
+    assert.deepEqual(caps(limits), { visual: 3, structure: 3 });
 });

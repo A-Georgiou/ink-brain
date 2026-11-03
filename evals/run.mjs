@@ -357,6 +357,7 @@ function measure(scenario, meta, record) {
     }
     const overlaps = new Set(record.frames.flatMap((f) => f.boards.flatMap((b) => b.overlaps)));
     const off = new Set(record.frames.flatMap((f) => f.boards.flatMap((b) => b.off)));
+    const boardProblems = (key) => new Set(record.frames.flatMap((f) => f.boards.flatMap((b) => b[key] ?? []))).size;
     const t = meta.target;
     const covered = record.frames.map(({ layout }) => (layout ? [layout.bubble, layout.captions, ...layout.panels].filter(Boolean).reduce((sum, r) => sum + intersection(t, r), 0) / (t.w * t.h) : 0));
     return {
@@ -370,6 +371,10 @@ function measure(scenario, meta, record) {
         boardOverlaps: overlaps.size,
         boardOff: off.size,
         ...measureLayout(record.frames, SCREEN),
+        boardNodeOverlaps: boardProblems("nodeOverlaps"),
+        boardTextOverflow: boardProblems("boxTextOverflow"),
+        boardEdgeNodeCrossings: boardProblems("edgeNodeCrossings"),
+        boardEdgeTextCrossings: boardProblems("edgeTextCrossings"),
         targetCovered: Math.round(100 * Math.min(1, Math.max(0, ...covered))),
         pointed: scenario.mark === false ? pointedAt(t, record.tools) : undefined,
         reads: record.tools.filter((tool) => tool.name === "live_read").map((tool) => tool.args.url),

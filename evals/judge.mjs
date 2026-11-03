@@ -90,6 +90,7 @@ function promptFor({ scenario, meta, record, metrics, reference, frames }) {
         lines.push("Tools, in order:", ...(record.tools.length ? record.tools.map((tool) => `- ${describeTool(tool)}`) : ["- none"]));
     }
     const checks = [`board text overlaps: ${metrics.boardOverlaps}, board text off the edge: ${metrics.boardOff}`, `share of the user's target hidden under Ink Brain's own bubble or panels at worst: ${metrics.targetCovered}%`, `panel headers hidden by Ink Brain's bubble or another panel: ${metrics.panelHeaderCovered}%, panels offscreen: ${metrics.panelOffscreen}%`];
+    if (scenario.category === "diagram") checks.push(`board node overlaps: ${metrics.boardNodeOverlaps ?? 0}, text outside its box: ${metrics.boardTextOverflow ?? 0}, edges crossing other nodes: ${metrics.boardEdgeNodeCrossings ?? 0}, edges crossing labels: ${metrics.boardEdgeTextCrossings ?? 0}`);
     if (metrics.pointed !== undefined) checks.push(`a mark landed on the right control: ${metrics.pointed ? "yes" : "no"}`);
     if (record.turns) checks.push(`panels Ink Brain left on screen at the end: ${metrics.panelsAtEnd} (at most ${metrics.panelsAtMost} at once, over ${metrics.turns} turns)`);
     lines.push(`Automatic checks: ${checks.join("; ")}.`);
@@ -134,6 +135,10 @@ export function limitsFor({ scenario, record, metrics }, evidence) {
     else if (minorDefects) limit("visual", 5 - Math.min(2, minorDefects), `${minorDefects} visual blemishes`);
     if (metrics.boardOverlaps || metrics.boardOff) limit("visual", 3, "board text overlaps or runs off the board");
     if (metrics.panelsAtEnd >= 3) limit("visual", metrics.panelsAtEnd >= 5 ? 2 : 3, `${metrics.panelsAtEnd} of its panels were still piled on the screen when the conversation ended`);
+    if (scenario.category === "diagram") {
+        if (metrics.boardNodeOverlaps || metrics.boardTextOverflow || metrics.boardEdgeNodeCrossings || metrics.boardEdgeTextCrossings) limit("visual", 3, "diagram nodes, labels or edges collide");
+        if (metrics.boardNodeOverlaps || metrics.boardEdgeNodeCrossings) limit("structure", 3, "diagram nodes overlap or an edge crosses another node");
+    }
     if (metrics.targetCovered >= 20) limit("visual", metrics.targetCovered >= 50 ? 2 : 3, `Ink Brain hid ${metrics.targetCovered}% of what the user circled`);
     if (metrics.panelHeaderCovered >= 25) limit("visual", 3, `Ink Brain hid ${metrics.panelHeaderCovered}% of a panel's title bar`);
     if (!metrics.mediaMatch) limit("fit", 2, `it used ${metrics.media.join(" and ") || "nothing"} where ${scenario.expect.join(" or ")} suits`);
