@@ -13,6 +13,12 @@ const CLOSE_ICON = `<svg viewBox="0 0 24 24" width="14" height="14"><path stroke
 
 const clamp = (value, min, max) => Math.min(Math.max(value, min), Math.max(min, max));
 const asRect = (r) => ({ x: r.x, y: r.y, w: r.w ?? r.width, h: r.h ?? r.height });
+// Whether a panel hides a fifth or more of what the user marked.
+const covers = (mark, panel) => {
+    if (!mark) return false;
+    const area = Math.max(0, Math.min(mark.x + mark.w, panel.x + panel.w) - Math.max(mark.x, panel.x)) * Math.max(0, Math.min(mark.y + mark.h, panel.y + panel.h) - Math.max(mark.y, panel.y));
+    return area > 0.2 * Math.max(1, mark.w * mark.h);
+};
 
 export class Panels {
     #panels = new Map();
@@ -322,7 +328,9 @@ export class Panels {
         const target = isNew && placeSelf && kind === "scene" && !Number.isFinite(rect.width) && !Number.isFinite(rect.height) ? this.target() : null;
         const others = [...this.#panels.values()].filter((p) => p !== panel && p.el.isConnected && !p.el.classList.contains("away")).map((p) => asRect(p.el.getBoundingClientRect()));
         const roomy = target && stageSpot({ target: asRect(target), view: { width: innerWidth, height: innerHeight }, max: STAGE_MAX, min: STAGE_MIN, others });
-        const spot = roomy || (isNew ? this.#place(width, height, panel, placeSelf ? null : rect, undefined, min) : { x: placeSelf ? el.offsetLeft : rect.x, y: placeSelf ? el.offsetTop : rect.y, w: width, h: height });
+        // A panel carried on from an earlier turn gets out of the way if the user has since marked something under it.
+        const inTheWay = !isNew && placeSelf && panel.autoPlaced && covers(this.target(), asRect(el.getBoundingClientRect()));
+        const spot = roomy || (isNew || inTheWay ? this.#place(width, height, panel, placeSelf ? null : rect, undefined, min) : { x: placeSelf ? el.offsetLeft : rect.x, y: placeSelf ? el.offsetTop : rect.y, w: width, h: height });
         el.style.width = `${spot.w}px`;
         el.style.height = `${spot.h}px`;
         el.style.left = `${clamp(spot.x, margin, innerWidth - spot.w - margin)}px`;
