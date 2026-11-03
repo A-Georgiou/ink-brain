@@ -506,9 +506,10 @@ export class Annotations {
         return { nodes, duration: duration + lead, diagram };
     }
 
-    // A tight rough outline around the control a mark points at.
+    // A tight rough outline around the control a mark points at; a small control keeps its right side bare, where its label usually starts.
     #frame(group, box, color, delay, seed) {
-        return this.#ink(group, generator.rectangle(box.x - 3, box.y - 3, box.w + 6, box.h + 6, this.#opts(color, seed + 9, { roughness: 0.4, bowing: 0.3, strokeWidth: 2, disableMultiStroke: true })), delay);
+        const right = box.w <= 28 && box.h <= 28 ? 0 : 3;
+        return this.#ink(group, generator.rectangle(box.x - 3, box.y - 3, box.w + 3 + right, box.h + 6, this.#opts(color, seed + 9, { roughness: 0.4, bowing: 0.3, strokeWidth: 2, disableMultiStroke: true })), delay);
     }
 
     #pill(text, x, y, color, delay, align = "") {
