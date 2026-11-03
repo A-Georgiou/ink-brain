@@ -44,7 +44,9 @@ const OUT = path.join(here, "results", LABEL);
 const CONFIG = { ...DEFAULTS, model: option("model", DEFAULTS.model), reasoningEffort: option("effort", DEFAULTS.reasoningEffort) };
 const EFFORT = effortFor(CONFIG.model, CONFIG.reasoningEffort);
 // One judge from each family under test, so neither family grades only itself.
-const JUDGE = { models: option("judge", "gpt-6.1-sol,claude-opus-5.5").split(","), effort: "medium" };
+const JUDGE = { models: option("judge", "gpt-6.1-sol,claude-opus-5.5").split(","), effort: "medium", adjudicator: argv.includes("--no-adjudicator") ? null : option("adjudicator", "gemini-4-argon") };
+if (JUDGE.adjudicator && JUDGE.models.includes(JUDGE.adjudicator)) throw new Error("the 3D adjudicator must be independent of both panel judges");
+if (JUDGE.adjudicator && JUDGE.models.length !== 2) throw new Error("3D adjudication requires exactly two initial panel judges");
 const GEOMETRY = { displayId: 1, bounds: { x: 0, y: 0, ...SCREEN }, ...SCREEN, scale: 1, modelWidth: SCREEN.width, modelHeight: SCREEN.height };
 const OWN_TOOLS = new Set(STANDALONE_TOOLS.map((tool) => tool.name));
 const VISUAL_TOOLS = new Set(["live_explain", "live_panel", "live_annotate", "live_image", "live_cutout"]);
@@ -54,7 +56,9 @@ const REFRESH_PAGES = argv.includes("--refresh-pages");
 // Replays the tool calls recorded under that label instead of asking the model, to compare rendering alone.
 const REPLAY = option("replay", null);
 const REJUDGE_FROM = option("rejudge-from", null);
+const REUSE_JUDGES = argv.includes("--reuse-judges");
 if (REJUDGE_FROM && (!/^[\w.-]+$/.test(REJUDGE_FROM) || REJUDGE_FROM.startsWith(".") || REJUDGE_FROM === LABEL)) throw new Error("--rejudge-from needs a different, safe source label");
+if (REUSE_JUDGES && !REJUDGE_FROM && !argv.includes("--rejudge")) throw new Error("--reuse-judges needs --rejudge or --rejudge-from");
 const VERSUS = option("versus", null)?.split(",");
 const PAIR_SOURCES = VERSUS && pairSources(VERSUS.join(","));
 if (PAIR_SOURCES?.some((source) => source.attempt) && Number(option("repeat", 1)) !== 1) throw new Error("--versus label@attempt needs --repeat 1");
@@ -523,7 +527,8 @@ async function evaluate(scenario, attempt, { reader, client, judge }) {
             screen: path.join(dir, "00-screen.jpg"),
             frames: (record.turns ? pickFrames(record, pick) : pick(record.frames)).map((frame) => ({ ...frame, path: path.join(dir, frame.file) })),
         };
-        verdict = await judge.score(input).catch((error) => ({ judgeError: error.message }));
+        const initialJudges = REUSE_JUDGES ? JSON.parse(fs.readFileSync(path.join(dir, "result.json"), "utf8")).judges : null;
+        verdict = await judge.score(input, { initialJudges }).catch((error) => ({ judgeError: error.message }));
     }
     const result = { id, scenario: scenario.id, category: scenario.category, ...verdict, metrics, error: record.error };
     fs.writeFileSync(path.join(dir, "result.json"), JSON.stringify(result, null, 1));
@@ -581,12 +586,12 @@ app.whenReady().then(async () => {
         app.quit();
         return;
     }
-    console.log(`Eval ${LABEL}: ${jobs.length} runs of ${CONFIG.model} (${EFFORT}${STREAM ? "" : ", not streamed"}), judged by ${judge ? JUDGE.models.join(" and ") : "nobody"}`);
+    console.log(`Eval ${LABEL}: ${jobs.length} runs of ${CONFIG.model} (${EFFORT}${STREAM ? "" : ", not streamed"}), judged by ${judge ? `${JUDGE.models.join(" and ")}${JUDGE.adjudicator ? `, with ${JUDGE.adjudicator} for disputed 3D` : ""}` : "nobody"}`);
     const results = await pool(jobs, Number(option("parallel", 4)), ([scenario, attempt]) => evaluate(scenario, attempt, { reader, client, judge }));
     // Re-running some scenarios into an existing label replaces just those.
     const summaryFile = path.join(OUT, "summary.json");
     const earlier = fs.existsSync(summaryFile) ? JSON.parse(fs.readFileSync(summaryFile, "utf8")).results.filter((r) => !results.some((n) => n.id === r.id)) : [];
-    const summary = summarize(LABEL, [...earlier, ...results], { model: CONFIG.model, effort: EFFORT, stream: STREAM, judge: JUDGE.models.join("+"), measurement: REJUDGE_FROM || argv.includes("--rejudge") ? null : MEASUREMENT, ...(REJUDGE_FROM ? { rejudgedFrom: REJUDGE_FROM } : {}), ...(REPLAY ? { replayedFrom: REPLAY } : {}), ...(REFRESH_PAGES ? { refreshedPages: true } : {}) });
+    const summary = summarize(LABEL, [...earlier, ...results], { model: CONFIG.model, effort: EFFORT, stream: STREAM, judge: [...JUDGE.models, ...(JUDGE.adjudicator ? [`flagged-3d:${JUDGE.adjudicator}`] : [])].join("+"), measurement: REJUDGE_FROM || argv.includes("--rejudge") ? null : MEASUREMENT, ...(REJUDGE_FROM ? { rejudgedFrom: REJUDGE_FROM } : {}), ...(REUSE_JUDGES ? { reusedJudges: true } : {}), ...(REPLAY ? { replayedFrom: REPLAY } : {}), ...(REFRESH_PAGES ? { refreshedPages: true } : {}) });
     fs.writeFileSync(summaryFile, JSON.stringify(summary, null, 1));
     printReport([summary]);
     await client.stop();

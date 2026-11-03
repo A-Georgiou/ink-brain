@@ -7,7 +7,7 @@ import { auditBoard } from "../evals/board-audit.mjs";
 import { conversationMetrics, marksFor, pickFrames, turnsOf } from "../evals/conversation.mjs";
 import { elementsAt, snapOnto } from "../evals/elements.mjs";
 import { checkMeasurement, integrationReport, printIntegration } from "../evals/integration.mjs";
-import { judgeDisagreement, limitsFor, overall, passes } from "../evals/judge.mjs";
+import { Judge, judgeDisagreement, limitsFor, overall, passes } from "../evals/judge.mjs";
 import { latencyMetrics, replayTimeline } from "../evals/latency.mjs";
 import { measureLayout } from "../evals/layout.mjs";
 import { scriptedAnswer } from "../evals/learner.mjs";
@@ -228,6 +228,68 @@ test("judge disagreement reports large gaps even when the core caps the final sc
     assert.equal(report.flagged, true);
     assert.equal(report.overallGap, 0);
     assert.equal(judgeDisagreement({ category: "3d", judges: [{ scores }, { failed: "offline" }] }).missing, 1);
+});
+
+test("a third independent judge adjudicates only disputed 3D and keeps evidence caps", async () => {
+    const first = { correct: 2, complete: 4, clear: 4, visual: 3, fit: 3, fidelity: 2 };
+    const panel = [
+        { model: "one", scores: first, given: first, points: [{ said: "yes", shown: "yes" }], errors: [], defects: [], issues: [] },
+        { model: "two", scores: { ...first, correct: 4 }, given: { ...first, correct: 4 }, points: [{ said: "yes", shown: "yes" }], errors: [], defects: [], issues: [] },
+    ];
+    let calls = 0;
+    const client = {
+        async createSession({ model }) {
+            assert.equal(model, "third");
+            calls++;
+            return {
+                sessionId: String(calls),
+                async sendAndWait({ prompt }) {
+                    assert.match(prompt, /Independent 3D adjudication: inspect correct/);
+                    return { data: { content: JSON.stringify({ points: [{ said: "yes", shown: "yes" }], errors: [{ severity: "major", what: "the linkage is wrong" }], defects: [], scores: { ...first, correct: 5 }, evidence: Object.fromEntries(Object.keys(first).map((key) => [key, "Image 2 shows the linkage"])), issues: ["Wrong linkage"] }) } };
+                },
+                async disconnect() {},
+            };
+        },
+        async deleteSession() {},
+    };
+    const judge = new Judge({ client, models: ["one", "two"], adjudicator: "third", effort: "medium", workspace: "." });
+    const input = {
+        scenario: { category: "3d", points: ["a linkage"], expect: ["scene"] },
+        meta: { title: "Test", target: { x: 0, y: 0, w: 1, h: 1 }, marks: [] },
+        record: { text: "", captions: [], tools: [], error: null },
+        metrics: { boardOverlaps: 0, boardOff: 0, targetCovered: 0, panelHeaderCovered: 0, mediaMatch: true, media: ["scene"] },
+        screen: new URL("./evals.test.mjs", import.meta.url),
+        frames: [],
+    };
+    const disputed = await judge.score(input, { initialJudges: panel });
+    assert.equal(calls, 1);
+    assert.equal(disputed.judges[2].scores.correct, 2, "the adjudicator's major-error cap still applies");
+    assert.equal(disputed.scores.correct, 2);
+    assert.deepEqual([disputed.disagreement.before.flagged, disputed.disagreement.flagged], [true, false]);
+    assert.deepEqual((await judge.score(input, { initialJudges: disputed.judges })).scores, disputed.scores);
+    assert.equal(calls, 1, "rejudging from a settled panel reuses its evidence");
+    await assert.rejects(judge.score(input, { initialJudges: [...panel, { ...disputed.judges[2], model: "different" }] }), /recorded adjudicator/);
+    const agreed = await judge.score(input, { initialJudges: [panel[0], { ...panel[1], scores: first, given: first }] });
+    assert.equal(calls, 1, "no third judge for an agreed panel");
+    assert.equal(agreed.judges.length, 2);
+    const unresolved = judgeDisagreement({ category: "3d", judges: [{ scores: { ...first, correct: 1 } }, { scores: { ...first, correct: 3 } }, { scores: { ...first, correct: 5 } }] });
+    assert.equal(unresolved.flagged, true, "unresolved outliers remain flagged");
+    assert.deepEqual(unresolved.large, ["correct"]);
+    const crossed = judgeDisagreement({ category: "3d", judges: [
+        { scores: { ...first, visual: 5 } },
+        { scores: { ...first, correct: 4 } },
+        { scores: { ...first, fidelity: 4 } },
+    ] });
+    assert.equal(crossed.flagged, true, "agreement must come from the same pair across the entire rubric");
+    const opposing = [
+        { ...panel[0], scores: { ...first, correct: 1 }, given: { ...first, correct: 1 } },
+        { ...panel[1], scores: { ...first, correct: 3 }, given: { ...first, correct: 3 } },
+        { ...disputed.judges[2], scores: { ...first, correct: 5 }, given: { ...first, correct: 5 }, errors: [] },
+    ];
+    const stillDisputed = await judge.score(input, { initialJudges: opposing });
+    assert.equal(stillDisputed.disagreement.flagged, true);
+    assert.equal(stillDisputed.scores.correct, 2, "unresolved gaps retain the original panel mean");
+    assert.equal(calls, 1);
 });
 
 test("panel title bars obscured by the answer are measured and capped, but inset captions are not", () => {

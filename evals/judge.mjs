@@ -184,19 +184,26 @@ export function judgeDisagreement({ category, judges }) {
     const scored = judges?.filter((judge) => judge.scores) ?? [];
     if (scored.length < 2) return { large: [], overallGap: null, flagged: true, missing: (judges?.length ?? 2) - scored.length };
     const core = coreOf(category);
-    const gaps = Object.fromEntries(Object.keys(scored[0].scores).map((key) => [key, Math.abs(scored[0].scores[key] - scored[1].scores[key])]));
-    const large = Object.entries(gaps).filter(([, gap]) => gap >= 2).map(([key]) => key);
-    const overallGap = Math.abs(overall(scored[0].scores, core) - overall(scored[1].scores, core));
-    return { large, overallGap, flagged: large.length > 0 || overallGap >= 1, missing: (judges?.length ?? 2) - scored.length };
+    const missing = (judges?.length ?? 2) - scored.length;
+    const compare = (left, right) => {
+        const large = Object.keys(left.scores).filter((key) => Math.abs(left.scores[key] - right.scores[key]) >= 2);
+        const overallGap = Math.abs(overall(left.scores, core) - overall(right.scores, core));
+        return { large, overallGap, flagged: large.length > 0 || overallGap >= 1 };
+    };
+    const before = compare(scored[0], scored[1]);
+    if (scored.length === 2) return { ...before, flagged: Boolean(missing || before.flagged), missing };
+    const pairs = [[0, 1], [0, 2], [1, 2]].map((pair) => ({ pair, ...compare(scored[pair[0]], scored[pair[1]]) }));
+    const best = pairs.sort((a, b) => Number(a.flagged) - Number(b.flagged) || a.large.length - b.large.length || a.overallGap - b.overallGap)[0];
+    return { large: best.large, overallGap: best.overallGap, flagged: Boolean(missing || best.flagged), missing, before, agreeing: best.flagged ? null : best.pair };
 }
 
 export class Judge {
     // models is the panel, ideally from different families than the model under test; disabledMcpServers keeps the user's MCP servers from starting.
-    constructor({ client, models, effort, workspace, disabledMcpServers = [] }) {
-        Object.assign(this, { client, models, effort, workspace, disabledMcpServers });
+    constructor({ client, models, effort, workspace, disabledMcpServers = [], adjudicator = null }) {
+        Object.assign(this, { client, models, effort, workspace, disabledMcpServers, adjudicator });
     }
 
-    async #ask(model, input) {
+    async #ask(model, input, focus = "") {
         const keys = Object.keys(CRITERIA[input.scenario.category]);
         const session = await this.client.createSession({
             model,
@@ -210,10 +217,12 @@ export class Judge {
         });
         try {
             const attachments = [input.screen, ...input.frames.map((f) => f.path)].map((file, i) => ({ type: "blob", data: fs.readFileSync(file).toString("base64"), mimeType: "image/jpeg", displayName: `image-${i + 1}.jpg` }));
-            const reply = await session.sendAndWait({ prompt: promptFor(input), attachments }, 300_000);
+            const prompt = promptFor(input) + (focus ? `\n\nIndependent 3D adjudication: ${focus}\nThese are possible flaws, not established facts or scores. Verify each against the original and the supplied frames, cite where it is visible or why it is not, and apply the same criteria and hard limits. Score every criterion.` : "");
+            const reply = await session.sendAndWait({ prompt, attachments }, 300_000);
             const json = JSON.parse(String(reply?.data.content ?? "").match(/\{[\s\S]*\}/)?.[0] ?? "null");
             if (!keys.every((key) => Number.isFinite(Number(json?.scores?.[key])))) throw new Error(`${model} did not return every score`);
             if (json.points?.length !== input.scenario.points.length) throw new Error(`${model} did not check every key point`);
+            if (focus && !keys.every((key) => String(json.evidence?.[key] ?? "").trim())) throw new Error(`${model} did not cite evidence for every criterion`);
             const given = Object.fromEntries(keys.map((key) => [key, Math.min(5, Math.max(1, Math.round(Number(json.scores[key]))))]));
             const limits = limitsFor(input, json);
             const scores = Object.fromEntries(keys.map((key) => [key, Math.min(given[key], ...limits.filter((l) => l.key === key).map((l) => l.max))]));
@@ -224,23 +233,46 @@ export class Judge {
         }
     }
 
-    // Returns { score, scores, pass, judges, issues, summary }, averaging the panel; frames are { path, tag, at }.
-    async score(input) {
-        const asked = await Promise.all(
-            this.models.map(async (model) => {
-                for (let tries = 0; ; tries++) {
-                    try {
-                        return await this.#ask(model, input);
-                    } catch (error) {
-                        if (tries) return { model, failed: error.message };
-                    }
-                }
-            }),
-        );
-        const judges = asked.filter((j) => j.scores);
-        if (!judges.length) throw new Error(asked.map((j) => j.failed).join("; "));
-        const keys = Object.keys(judges[0].scores);
-        const scores = Object.fromEntries(keys.map((key) => [key, judges.reduce((sum, j) => sum + j.scores[key], 0) / judges.length]));
-        return { score: overall(scores, coreOf(input.scenario.category)), scores, pass: passes(scores), judges: asked, disagreement: judgeDisagreement({ category: input.scenario.category, judges: asked }), issues: judges.flatMap((j) => j.issues).slice(0, 8), summary: judges.map((j) => j.summary).join(" ") };
+    async #judge(model, input, focus = "") {
+        for (let tries = 0; ; tries++) {
+            try {
+                return await this.#ask(model, input, focus);
+            } catch (error) {
+                if (tries) return { model, failed: error.message };
+            }
+        }
+    }
+
+    // Unresolved scores keep the original two-judge mean; agreed three-judge scores use the median.
+    async score(input, { initialJudges = null } = {}) {
+        const keys = Object.keys(CRITERIA[input.scenario.category]);
+        const reuse = (judge, model) => {
+            if (judge?.model !== model || (judge.scores && !keys.every((key) => Number.isFinite(judge.given?.[key])))) throw new Error("recorded judges do not match this panel and rubric");
+            if (!judge.scores) return judge;
+            const limits = limitsFor(input, judge);
+            const scores = Object.fromEntries(keys.map((key) => [key, Math.min(judge.given[key], ...limits.filter((limit) => limit.key === key).map((limit) => limit.max))]));
+            return { ...judge, scores, limits };
+        };
+        const extra = input.scenario.category === "3d" && this.adjudicator ? 1 : 0;
+        if (initialJudges && (!Array.isArray(initialJudges) || ![this.models.length, this.models.length + extra].includes(initialJudges.length))) throw new Error("recorded judges do not match this panel and rubric");
+        if (initialJudges?.length === this.models.length + 1 && initialJudges.at(-1)?.model !== this.adjudicator) throw new Error("recorded adjudicator does not match this panel");
+        const asked = initialJudges ? this.models.map((model, index) => reuse(initialJudges[index], model)) : await Promise.all(this.models.map((model) => this.#judge(model, input)));
+        const panel = asked.filter((judge) => judge.scores);
+        if (!panel.length) throw new Error(asked.map((judge) => judge.failed).join("; "));
+        const before = judgeDisagreement({ category: input.scenario.category, judges: asked });
+        if (input.scenario.category === "3d" && before.flagged && this.adjudicator) {
+            const claimed = panel.flatMap((judge) => [...(judge.errors ?? []), ...(before.large.includes("visual") ? judge.defects ?? [] : [])].map((item) => item.what)).filter(Boolean);
+            const focus = [`inspect ${before.large.join(", ") || "the overall score"} especially carefully`, ...claimed.slice(0, 10).map((what) => `- ${String(what).slice(0, 450)}`)].join("\n");
+            const previous = initialJudges?.[this.models.length];
+            asked.push(previous?.scores ? reuse(previous, this.adjudicator) : await this.#judge(this.adjudicator, input, focus));
+        }
+        const disagreement = judgeDisagreement({ category: input.scenario.category, judges: asked });
+        const consensus = asked.length === 3 && !disagreement.flagged;
+        const scored = consensus ? asked : panel;
+        const scores = Object.fromEntries(keys.map((key) => {
+            const values = scored.map((judge) => judge.scores[key]).sort((a, b) => a - b);
+            return [key, consensus ? values[1] : values.reduce((sum, value) => sum + value, 0) / values.length];
+        }));
+        return { score: overall(scores, coreOf(input.scenario.category)), scores, pass: passes(scores), judges: asked, disagreement, issues: asked.filter((judge) => judge.scores).flatMap((judge) => judge.issues).slice(0, 8), summary: asked.map((judge) => judge.summary).filter(Boolean).join(" ") };
     }
 }
