@@ -19,7 +19,7 @@ import { measureLayout } from "./layout.mjs";
 import { printReport, summarize } from "./report.mjs";
 import { SCENARIOS } from "./scenarios.mjs";
 import { openStage, SCREEN } from "./stage.mjs";
-import { PairJudge, summarizePairs } from "./versus.mjs";
+import { PairJudge, pairSources, sourceId, summarizePairs } from "./versus.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURES = path.join(here, "fixtures");
@@ -40,7 +40,8 @@ const STREAM = !argv.includes("--no-stream");
 // Replays the tool calls recorded under that label instead of asking the model, to compare rendering alone.
 const REPLAY = option("replay", null);
 const VERSUS = option("versus", null)?.split(",");
-if (VERSUS && (VERSUS.length !== 2 || VERSUS.some((label) => !/^[\w.-]+$/.test(label) || label.startsWith(".")))) throw new Error("--versus needs two existing labels: --versus baseline,candidate");
+const PAIR_SOURCES = VERSUS && pairSources(VERSUS.join(","));
+if (PAIR_SOURCES?.some((source) => source.attempt) && Number(option("repeat", 1)) !== 1) throw new Error("--versus label@attempt needs --repeat 1");
 const TURN_TIMEOUT_MS = 8 * 60_000;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -317,7 +318,7 @@ async function evaluatePair(scenario, attempt, pairJudge) {
     let verdict;
     try {
         const meta = JSON.parse(fs.readFileSync(path.join(FIXTURES, `${scenario.id}.json`), "utf8"));
-        const [left, right] = VERSUS.map((label) => storedRun(label, id, scenario, meta));
+        const [left, right] = PAIR_SOURCES.map((source) => storedRun(source.label, sourceId(source, scenario.id, attempt), scenario, meta));
         if (!fs.readFileSync(left.screen).equals(fs.readFileSync(right.screen))) throw new Error(`${id} used different starting screens`);
         const referenceFile = path.join(FIXTURES, `${scenario.id}.reference.txt`);
         verdict = await pairJudge.compare({

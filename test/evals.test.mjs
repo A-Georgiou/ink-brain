@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { judgeDisagreement, limitsFor, overall, passes } from "../evals/judge.mjs";
 import { measureLayout } from "../evals/layout.mjs";
 import { compareRuns, sameCodeControl } from "../evals/stats.mjs";
-import { PairJudge, pairOutcome, pairPrompt, summarizePairs } from "../evals/versus.mjs";
+import { PairJudge, pairOutcome, pairPrompt, pairSources, sourceId, summarizePairs } from "../evals/versus.mjs";
 
 const run = (category, metrics = {}, tools = []) => ({
     scenario: { category, expect: ["board"], points: ["a", "b", "c"] },
@@ -105,6 +105,12 @@ test("pair prompts swap positions but never disclose which label owns either ans
     assert.match(pairPrompt(input, "BA"), /# A\nSpoken answer: "candidate"/);
     const summary = summarizePairs([{ id: "x", scenario: "x", category: "3d", preference: 1, winner: "right", orderDisagreements: 0 }], ["base", "candidate"]);
     assert.equal(summary.interval, null);
+});
+
+test("pairwise sources can compare independent attempts of the same code safely", () => {
+    const [first, second] = pairSources("3d-r4@1,3d-r4@2");
+    assert.deepEqual([sourceId(first, "heart", 1), sourceId(second, "heart", 1)], ["heart", "heart~2"]);
+    assert.throws(() => pairSources("../other,3d-r4"), /invalid pairwise source/);
 });
 
 test("pairwise judges see both positions and normalize their votes to the candidate", async () => {
