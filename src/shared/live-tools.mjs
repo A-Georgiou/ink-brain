@@ -20,7 +20,7 @@ const SHAPE = {
             description:
                 "Box kinds take x, y, w, h (the target's box): circle (hand-drawn loop around it; use sparingly), rect, highlight (marker swipe), underline, spotlight (dims everything else), " +
                 "board (dark sketch area to draw on, text is its heading), brace (curly brace on `side` with text), lens (magnifies the box into a round lens at `at`). " +
-                "Point kinds take x, y: write (handwritten text whose top-left is x, y; w is its max width), label (crisp pill centred on x, y), marker (numbered dot), " +
+                "Point kinds take x, y: write (handwritten text whose top-left is x, y; w is its max width), label (crisp pill centred on x, y), marker (numbered badge: over a control it outlines it and sits on its corner), " +
                 "pointer (your cursor glides through `points` to x, y; click shows a click), pulse (attention rings), check, cross. " +
                 "arrow and line take from and to; path takes points (a freehand stroke). callout writes text at `at` with an arrow to the target x, y. " +
                 "diagram sketches nodes (id, text, centre x, y, shape box|ellipse|diamond|text) joined by edges (from, to, text) on a dark board; " +
