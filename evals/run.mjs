@@ -64,6 +64,12 @@ function narrator() {
 const overlayState = (thinking) => ({ pen: false, listening: false, thinking, speaking: false, controlling: false, stayLive: false, target: "auto", resolvedTarget: "Ink Brain" });
 const fixtureOf = (scenario) => scenario.fixture ?? scenario.id;
 
+// What the accessibility tree listed on the captured page, when the fixture recorded it.
+function loadElements(id) {
+    const file = path.join(FIXTURES, `${id}.elements.json`);
+    return fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : null;
+}
+
 // Plays one turn on the stage and records what the user would see and hear.
 async function play(scenario, dir, { reader, client, replay = null, grid }) {
     const meta = JSON.parse(fs.readFileSync(path.join(FIXTURES, `${fixtureOf(scenario)}.json`), "utf8"));
@@ -75,8 +81,7 @@ async function play(scenario, dir, { reader, client, replay = null, grid }) {
     const many = asked.length > 1;
     const record = { text: "", captions: [], tools: [], frames: [], drawn: [], timeline: [], console: [], checks: [], controls: false, error: null, firstWords: null, firstVisual: null, firstNarration: null, writing: null, streamed: null, total: null, ...(many ? { turns: [] } : {}) };
     let turn = { ask: asked[0].ask, at: 0, text: "", captions: [], tools: [], firstWords: null, firstVisual: null, error: null };
-    const elementsFile = path.join(FIXTURES, `${fixtureOf(scenario)}.elements.json`);
-    const elements = fs.existsSync(elementsFile) ? JSON.parse(fs.readFileSync(elementsFile, "utf8")) : null;
+    const elements = loadElements(fixtureOf(scenario));
     const stage = await openStage({ image: screen, title: meta.title, onConsole: (line) => record.console.push(line.slice(0, 400)) });
     let start = Date.now();
     const elapsed = () => Date.now() - start;
@@ -357,7 +362,7 @@ function pointedAt(target, tools) {
 }
 
 // Measures what the judge cannot count reliably: media, failures, latency, overlaps and covering the target; grid is how busy the screen is, for how much its notes cover.
-function measure(scenario, meta, record, grid) {
+function measure(scenario, meta, record, grid, elements) {
     const media = new Set();
     for (const { name, args = {} } of record.tools) {
         if (name === "live_explain") {
@@ -395,7 +400,7 @@ function measure(scenario, meta, record, grid) {
         noteCovered: scenario.category.startsWith("pointing") ? Math.round(100 * Math.min(1, Math.max(0, ...noted))) : undefined,
         noteInk: scenario.category.startsWith("pointing") ? Math.max(0, ...record.frames.flatMap(({ layout }) => (layout?.notes ?? []).map((note) => inkIn(grid, note)))) : undefined,
         pointed: scenario.mark === false ? pointedAt(t, record.tools) : undefined,
-        aim: scenario.category.startsWith("pointing") ? aimAt(meta, drawnShapes(record)) : undefined,
+        aim: scenario.category.startsWith("pointing") ? aimAt(meta, drawnShapes(record), elements ?? []) : undefined,
         reads: record.tools.filter((tool) => tool.name === "live_read").map((tool) => tool.args.url),
         ...(record.turns ? conversationMetrics(record) : {}),
     };
@@ -469,7 +474,7 @@ async function evaluate(scenario, attempt, { reader, client, judge }) {
         fs.writeFileSync(path.join(dir, "record.json"), JSON.stringify(record, null, 1));
     }
     const meta = JSON.parse(fs.readFileSync(path.join(FIXTURES, `${fixtureOf(scenario)}.json`), "utf8"));
-    const metrics = measure(scenario, meta, record, grid);
+    const metrics = measure(scenario, meta, record, grid, loadElements(fixtureOf(scenario)));
     let verdict = {};
     if (judge && fs.existsSync(path.join(dir, "00-screen.jpg"))) {
         const referenceFile = path.join(FIXTURES, `${fixtureOf(scenario)}.reference.txt`);

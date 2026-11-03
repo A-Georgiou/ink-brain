@@ -254,6 +254,12 @@ test("pointing is checked strictly against the control, its look-alikes and the 
     assert.equal(aim({ kind: "circle", x: 400, y: 400, w: 40, h: 40 }).hit, false);
     assert.equal(aim({ kind: "marker", x: 114, y: 114 }, { kind: "arrow", from: [250, 20], to: [330, 80] }).steps, 2);
     assert.equal(aim().distance, null);
+    const label = { target: { x: 105, y: 105, w: 20, h: 14 } };
+    const button = [{ role: "AXButton", x: 95, y: 98, w: 40, h: 28 }];
+    const tip = { kind: "arrow", from: [60, 112], to: [92, 112] };
+    assert.equal(aimAt(label, [tip]).hit, false);
+    assert.deepEqual(aimAt(label, [tip], button), { hit: true, steps: 1, of: 1, distance: 3, wrong: 0, onTop: 0 });
+    assert.equal(aimAt(label, [tip], [{ role: "AXLink", x: 0, y: 0, w: 900, h: 600 }]).hit, false);
     assert.deepEqual(drawnShapes({ tools: [{ name: "live_annotate", args: { shapes: [{ kind: "callout", to: [1, 2], text: "x" }, { kind: "pulse", x: 1, y: 2 }] } }] }), [{ kind: "pulse", x: 1, y: 2 }]);
 });
 

@@ -1,5 +1,5 @@
 // What the Mac accessibility tree would list on a captured page, so evals can snap marks the way the app does.
-import { snapPoint, snapShape } from "../src/shared/geometry.mjs";
+import { CONTROLS, snapPoint, snapShape } from "../src/shared/geometry.mjs";
 
 // Runs in the page: controls, text runs and pictures as { role, name, x, y, w, h } in viewport pixels.
 export const PAGE_ELEMENTS = () => {
@@ -62,6 +62,9 @@ export const PAGE_ELEMENTS = () => {
 
 // The elements covering a point, innermost first, like the helper's chain of an element and its ancestors.
 export const elementsAt = (elements, [x, y]) => elements.filter((e) => x >= e.x && x < e.x + e.w && y >= e.y && y < e.y + e.h).sort((a, b) => a.w * a.h - b.w * b.h);
+
+// The smallest control under a point.
+export const controlAt = (elements, point) => elementsAt(elements, point).find((e) => CONTROLS.has(e.role));
 
 // Moves shapes onto the controls under them, as the app does with the real accessibility tree.
 export const snapOnto = (elements, shapes) =>

@@ -63,7 +63,7 @@ const SNAP_BOXES = new Set(["circle", "rect", "highlight", "underline", "spotlig
 // Marks that end up beside a control get an outline around it, so it is clear which one is meant.
 const FRAMED = new Set(["arrow", "callout", "marker"]);
 const FRAME_MAX = { w: 240, h: 100 };
-const CONTROLS = new Set(["AXButton", "AXLink", "AXCheckBox", "AXRadioButton", "AXPopUpButton", "AXMenuButton", "AXTextField", "AXTextArea", "AXSearchField", "AXComboBox", "AXTab", "AXSlider", "AXMenuItem", "AXMenuBarItem", "AXDisclosureTriangle", "AXIncrementor", "AXSwitch", "AXToggle"]);
+export const CONTROLS = new Set(["AXButton", "AXLink", "AXCheckBox", "AXRadioButton", "AXPopUpButton", "AXMenuButton", "AXTextField", "AXTextArea", "AXSearchField", "AXComboBox", "AXTab", "AXSlider", "AXMenuItem", "AXMenuBarItem", "AXDisclosureTriangle", "AXIncrementor", "AXSwitch", "AXToggle"]);
 // Points and arrow tips land only on a control, or failing that a bit of text or an image, never on a container.
 const LEAVES = new Set(["AXStaticText", "AXImage"]);
 const CONTROL_MAX = { w: 480, h: 160 };
