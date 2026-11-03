@@ -240,7 +240,7 @@ export function geometryFor(def) {
                 if (def.closed) curve.add(new THREE.LineCurve3(points.at(-1), points[0]));
             } else curve = new THREE.CatmullRomCurve3(points, Boolean(def.closed), "centripetal");
             if (def.style === "chain") {
-                const thick = Math.max(0.0005, num(def.radius, 0.1)) * 2;
+                const thick = Math.max(0.0005, num(def.radius, curve.getLength() / 55)) * 2;
                 return chainGeometry(curve, points, { width: Math.max(0.0005, num(def.width, thick * 0.85)), thick, closed: Boolean(def.closed) });
             }
             const radii = Array.isArray(def.radii) ? def.radii.filter((r) => Number.isFinite(r) && r >= 0) : [];

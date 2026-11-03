@@ -238,7 +238,7 @@ const SCENE_OBJECT = {
         at: { ...point, description: "With on: its centre in the picture, in screenshot pixels." },
         footprint: { ...point, description: "With on: its width and height in the picture, in screenshot pixels." },
         style: { type: "string", enum: ["round", "ribbon", "rod", "chain"], description: "wire: ribbon is a flat cable, such as a display or camera ribbon; rod is a straight rigid link. path: chain is a roller chain, drawn with closed true through the wheels it wraps, radius half its height and width across it." },
-        width: { type: "number", description: "wire: ribbon width. path: chain width." },
+        width: { type: "number", description: "wire: ribbon width. path: chain width (its height comes from radius; both scale with the loop when left out)." },
         curve: { type: "boolean" },
         closed: { type: "boolean" },
         text: { type: "string" },
