@@ -83,7 +83,7 @@ npm install
 npm start
 ```
 
-On first launch, a setup card asks you to allow **Ink Brain Helper** to use Screen Recording, the Microphone and Speech Recognition, and optionally Accessibility, so marks snap onto the controls you mean and it can operate your Mac when you approve. After switching on Screen Recording in System Settings, click **Restart helper**.
+On first launch, a setup card asks you to allow **Ink Brain Helper** to use Screen Recording, the Microphone and Speech Recognition, and optionally Accessibility, so marks snap onto the controls you mean and it can operate your Mac when you approve. After switching on Screen Recording in System Settings, click **Restart helper**. If you are not signed in to GitHub Copilot yet, **Sign in** on the same card runs `copilot login` in Terminal, and Ink Brain picks it up when you finish.
 
 The neural voice model (about 90 MB) downloads on first launch, and Apple voices fill in until it is ready. Run `npm run doctor` at any time to check the helper, permissions, screen capture and voices.
 
@@ -126,8 +126,8 @@ Settings live in `~/.ink-brain/config.json`, which **Open settings file** in the
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `hotkey` | `Alt+Shift+Space` | Shortcut for pen mode, in Electron accelerator syntax (`Alt` is Option). |
-| `model` | `gpt-6.1-terra` | Model for the built-in session; another vision model is used if it is unavailable. |
-| `reasoningEffort` | `null` | `null` runs each model at the effort that balances speed and quality best (medium for GPT-6.1 Terra, otherwise low). Higher effort plans more detailed visuals but takes longer to start talking. |
+| `model` | `gpt-6.1-terra` | Model for the built-in session; if your plan cannot use it, Ink Brain uses `auto`, where Copilot picks the model. |
+| `reasoningEffort` | `null` | `null` runs each model at the effort that balances speed and quality best (medium for GPT-6.1 Terra, otherwise low; `auto` takes none). Higher effort plans more detailed visuals but takes longer to start talking. |
 | `useCustomInstructions` | `false` | Load your Copilot custom instructions into the built-in session. |
 | `defaultTarget` | `auto` | `auto`, or `standalone` to always use the built-in session. |
 | `stayLive` | `false` | Start in hands-free mode. |
