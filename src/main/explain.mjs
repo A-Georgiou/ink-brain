@@ -89,6 +89,19 @@ export function validateSteps(steps) {
     return index >= 0 ? `step ${index + 1} needs something to say` : null;
 }
 
+// Gives every surround and flow of a board's steps a name, so a later turn can clear them even when the model did not.
+const named = (steps, run) => steps.map((actions, s) => actions.map((action, a) => (["surround", "flow"].includes(action?.do) && typeof action.id !== "string" ? { ...action, id: `e${run}-${s}-${a}` } : action)));
+
+// The surrounds and flows a board's steps leave showing.
+function leftShowing(steps) {
+    const shown = new Set();
+    for (const action of steps.flat()) {
+        if (["surround", "flow"].includes(action?.do) && typeof action.id === "string") shown.add(action.id);
+        else if (action?.do === "hide") for (const target of [action.target].flat()) shown.delete(target);
+    }
+    return [...shown];
+}
+
 // Streamed fields are JSON; models sometimes nest an object as JSON text.
 function objectOf(json) {
     const value = JSON.parse(json);
@@ -312,15 +325,17 @@ export class ExplainPlayer {
     // Keeps the last few stages, so a later turn can carry on with one instead of building it again.
     #remember(run) {
         if (!run.stage) return;
-        const { id, kind, spec, offset } = run.stage;
+        const { id, kind, spec, offset, loose = [] } = run.stage;
         this.#stages.delete(id);
-        this.#stages.set(id, { id, kind, spec, offset: offset + run.steps.length });
+        this.#stages.set(id, { id, kind, spec, offset: offset + run.steps.length, loose: kind === "board" ? [...loose, ...leftShowing(this.#playable(kind, spec, run.steps, run).steps)] : [] });
         for (const old of [...this.#stages.keys()].slice(0, -4)) this.#stages.delete(old);
     }
 
-    #playable(kind, spec, steps) {
+    #playable(kind, spec, steps, run) {
         const actions = steps.map((step) => step?.[kind]);
-        return kind === "scene" ? playableSteps(spec, actions) : playableBoardSteps(spec, actions);
+        if (kind === "scene") return playableSteps(spec, actions);
+        const playable = playableBoardSteps(spec, actions);
+        return { ...playable, steps: named(playable.steps, run.id) };
     }
 
     // Sends the stage the actions of steps that arrived after it opened.
@@ -329,10 +344,16 @@ export class ExplainPlayer {
         const first = stage.sent;
         if (first >= run.steps.length) return;
         stage.sent = run.steps.length;
-        const playable = this.#playable(stage.kind, stage.spec, run.steps);
+        const playable = this.#playable(stage.kind, stage.spec, run.steps, run);
         const labels = run.steps.slice(first).map((_, i) => `${stage.kind} step ${first + i + 1}:`);
         run.notes.push(...playable.dropped.filter((note) => labels.some((label) => note.startsWith(label))));
-        const added = await this.surface.addSteps(stage.id, playable.steps.slice(first), { board: stage.kind === "board" ? stage.spec : null, first });
+        const fresh = playable.steps.slice(first);
+        // A turn carried on from an earlier one starts by clearing the surrounds and flows that turn left behind.
+        if (!first && stage.loose?.length && fresh.length) {
+            fresh[0] = [{ do: "hide", target: stage.loose }, ...fresh[0]];
+            stage.loose = [];
+        }
+        const added = await this.surface.addSteps(stage.id, fresh, { board: stage.kind === "board" ? stage.spec : null, first });
         run.notes.push(...added.problems);
     }
 
@@ -354,7 +375,7 @@ export class ExplainPlayer {
         else if (!kind && id) run.notes.push(`there is no stage "${cleanId(id)}" to carry on with, so this played without one; send a board or scene to build it`);
         else if (kind) {
             const spec = scene ?? board;
-            const playable = this.#playable(kind, spec, run.steps);
+            const playable = this.#playable(kind, spec, run.steps, run);
             const placement = { x: spec.x, y: spec.y, width: spec.width, height: spec.height, over: spec.over };
             const reused = early?.kind === kind && early.id === target && early.spec === spec && early.title === String(title ?? "");
             const shown = playable.problem ? { failed: true, text: playable.problem } : reused ? early : await this.surface[kind]({ id: target, title: String(title ?? ""), ...placement, [kind]: spec }, playable.steps, preview?.pictures);

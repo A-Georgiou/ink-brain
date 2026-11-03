@@ -500,6 +500,24 @@ test("a follow-up explanation carries on with the stage it is given and says whi
     await again;
 });
 
+test("a follow-up on a board starts by clearing the surrounds and flows the last turn left, named or not", async () => {
+    const { player, surface, lines } = explainer();
+    const added = [];
+    surface.addSteps = async (id, steps) => (added.push(steps), { problems: [] });
+    const board = { elements: [{ id: "eq", type: "tex", tex: "x = 1" }] };
+    const first = player.play({ board, steps: [{ say: "One", board: [{ do: "surround", target: "eq" }, { do: "flow", target: "eq", id: "kept" }, { do: "hide", target: "kept" }] }] });
+    await tick();
+    lines[0].start();
+    lines[0].end();
+    await first;
+    const more = player.play({ id: "explain-1-board", steps: [{ say: "Two", board: [{ do: "highlight", target: "eq" }] }] });
+    await tick();
+    lines[1].start();
+    lines[1].end();
+    await more;
+    assert.deepEqual(added.at(-1)[0], [{ do: "hide", target: ["e1-0-0"] }, { do: "highlight", target: "eq" }]);
+});
+
 test("an explanation given only a stage id plays on it from where it stopped, without building it again", async () => {
     const { player, log, lines } = explainer();
     const scene = { objects: [{ id: "cage", type: "box" }] };
