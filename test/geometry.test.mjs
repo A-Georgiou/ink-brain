@@ -4,6 +4,7 @@ import { anchorAt, pageState, pageTitle } from "../src/shared/anchors.mjs";
 import { clearSpot, validateBoard } from "../src/shared/board.mjs";
 import { compile } from "../src/shared/mathexpr.mjs";
 import { validateScene } from "../src/shared/scene.mjs";
+import { traceOutline } from "../src/shared/trace.mjs";
 import { bubbleSpot, cropAround, describeMarks, modelImageSize, overlapArea, shapeToOverlay, snapShape, stageSpot, validateShape } from "../src/shared/geometry.mjs";
 
 test("model screenshots are capped at the configured long edge", () => {
@@ -182,4 +183,17 @@ test("scene mechanisms must move real parts, and steps drive only mechanisms", (
     assert.equal(validateScene({ objects, mechanisms }, [[{ do: "drive", target: "engine", turns: 0.5 }]]), null);
     assert.match(validateScene({ objects, mechanisms: [{ ...mechanisms[0], slider: "pistn" }] }), /moves "pistn"/);
     assert.match(validateScene({ objects, mechanisms }, [[{ do: "drive", target: "piston" }]]), /unknown mechanism "piston"/);
+});
+
+test("pictures trace to the outline of the thing in them, without the lines and labels around it", () => {
+    const [width, height] = [120, 100];
+    const data = new Uint8ClampedArray(width * height * 4).fill(255);
+    const paint = (x, y) => data.fill(30, (y * width + x) * 4, (y * width + x) * 4 + 3);
+    for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) if (Math.hypot(x - 50, y - 50) <= 30) paint(x, y);
+    for (let x = 80; x < 110; x++) paint(x, 50);
+    for (let y = 44; y < 56; y++) for (let x = 104; x < 116; x++) paint(x, y);
+    const outline = traceOutline({ width, height, data });
+    assert.ok(outline.length >= 8 && outline.length <= 96);
+    for (const [u, v] of outline) assert.ok(Math.abs(Math.hypot(u * width - 50, v * height - 50) - 30) < 3);
+    assert.equal(traceOutline({ width, height, data: new Uint8ClampedArray(width * height * 4).fill(255) }), null);
 });

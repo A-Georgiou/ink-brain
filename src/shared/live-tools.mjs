@@ -142,12 +142,12 @@ const SCENE_OBJECT = {
             enum: OBJECT_TYPES,
             description:
                 "box (size [w, h, d]; radius rounds the corners, 0 is sharp), sphere (radius), cylinder (radius, height, radius_top), cone (radius, height), torus (radius, tube), capsule (radius, length), plane (size [w, h]), " +
-                "loft (sections: a smooth body through cross-sections along x, closed at both ends: vehicle bodies, fuselages, hulls, bottles, animals, organs, handles; or region and outline: its silhouette traced on a side or front view of it in the picture, for its true profile), " +
+                "loft (sections: a smooth body through cross-sections along x, closed at both ends: vehicle bodies, fuselages, hulls, bottles, animals, organs, handles; or region: its picture in a side or front view, whose silhouette is traced for you so it has the true profile), " +
                 "extrude (points: a flat [x, y] outline with optional holes, depth thick: panels, brackets, plates, blades, silhouettes), lathe (points: a [radius, y] profile spun around y: wheels, knobs, bottles, pistons, lenses, bolts), gear (radius, teeth, depth, hole; faces the front), spring (radius, height, coils, tube), " +
                 "text (text, size [height]), arrow (from, to), path (points: a tube along them, with radii to taper or bulge it; curve false for straight segments, closed), " +
                 "wire (from, to: a cable that arcs between two parts and stays attached when they move; style ribbon is a flat cable, and style rod a straight rigid link joining the two parts' middles, such as a strut, linkage arm or push rod; reveal it with show and it lays itself from end to end), group (a parent that moves its children together), " +
                 "image (src: the saved path of an image from image_generation, size [height]), " +
-                "base (the body of a flat thing pictured on screen from above or the front, such as a circuit board, panel or keyboard: region is its picture in screenshot pixels, size [width, thickness] in real units, the depth follows the picture; outline and holes [x, y, radius] are traced on the picture), " +
+                "base (the body of a flat thing pictured on screen from above or the front, such as a circuit board, panel or keyboard, wearing that picture on its face: region is its picture in screenshot pixels, size [width, thickness] in real units, the depth follows the picture; its outline is traced for you, and holes [x, y, radius] are marked on the picture), " +
                 "part (a ready-made electronic component, modelled in detail: part names it; facing is the picture edge its opening faces; color tints its plastic, insert or light). " +
                 "Anything with on (a base id) and at (its centre in the picture, screenshot pixels) stands on that base exactly where it is in the picture, with footprint (its size in the picture) and height (how tall it really is); text on a base is printed on it.",
         },
@@ -211,7 +211,7 @@ const SCENE_OBJECT = {
             items: point,
             maxItems: 200,
             description:
-                "Traced on the picture in screenshot pixels. base: its outline, when it is not a plain rounded rectangle. " +
+                "Traced on the picture in screenshot pixels; leave it out and it is traced from the picture for you. base: its outline. " +
                 "loft: its silhouette in a side or front view, instead of sections; size is then [its real length across the region, its real width], round, top and bottom shape every section, and x = 0 is the middle of the region and y = 0 its bottom edge.",
         },
         part: { type: "string", enum: PART_KINDS, description: "part: which component. header and socket take grid [columns, rows], order and first (the picture corner of pin 1); usb-a takes stack (ports stacked); chip takes pins (leads)." },

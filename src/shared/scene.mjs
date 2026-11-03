@@ -21,7 +21,8 @@ export function gridCount(object) {
 }
 
 const radialCount = (object) => (Number.isInteger(object?.radial) && object.radial > 1 ? object.radial : 0);
-const isTraced = (object) => object.type === "loft" && isRegion(object.region) && Array.isArray(object.outline) && object.outline.filter(isFlatPoint).length >= 3;
+// A loft drawn from its picture: its outline is traced on it, or traced for it when left out.
+const isTraced = (object) => object.type === "loft" && isRegion(object.region) && (object.outline === undefined || (Array.isArray(object.outline) && object.outline.filter(isFlatPoint).length >= 3));
 
 // Every name an action, flow or wire can point at: object ids and grid or radial copies.
 function namesIn(objects) {
@@ -53,7 +54,7 @@ function objectsProblem(scene) {
         if (object.type === "extrude" && !(Array.isArray(object.points) && object.points.filter(isFlatPoint).length >= 3)) return `extrude "${id}" needs at least three [x, y] outline points`;
         if (object.type === "lathe" && !(Array.isArray(object.points) && object.points.filter(isFlatPoint).length >= 2)) return `lathe "${id}" needs at least two [radius, y] profile points`;
         if (object.type === "loft" && !isTraced(object) && !(Array.isArray(object.sections) && object.sections.filter(isSection).length >= 2)) {
-            return `loft "${id}" needs at least two sections, each with at, width and height, or region and outline traced on its picture`;
+            return `loft "${id}" needs at least two sections, each with at, width and height, or region, its picture in a side or front view`;
         }
         if (object.radial !== undefined && !(radialCount(object) && object.radial <= 120)) return `"${id}" radial must be a whole number of copies from 2 to 120`;
         if (object.pivot !== undefined && !isPoint(object.pivot)) return `"${id}" pivot must be [x, y, z]`;

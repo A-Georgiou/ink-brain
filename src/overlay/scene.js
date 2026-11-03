@@ -2,7 +2,9 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
+import { isRegion } from "/shared/geometry.mjs";
 import { gridCount } from "/shared/scene.mjs";
+import { traceOutline } from "/shared/trace.mjs";
 import { buildPart } from "./parts.js";
 import { arrowFor, baked, baseOf, clamp01, geometryFor, isFlat, isPoint, num, perPixel, ribbonGeometry, sideSpot, sizeOf, traced, v3 } from "./shapes.js";
 
@@ -66,10 +68,24 @@ function printed(def, frame, height) {
     return group;
 }
 
-async function loadTexture(url, id) {
+// The outline of the thing in a picture (a data URL), traced at a couple of hundred pixels across.
+async function outlineOf(url) {
+    const image = new Image();
+    image.src = url;
+    await image.decode();
+    const scale = Math.min(1, 220 / Math.max(image.width, image.height));
+    const canvas = Object.assign(document.createElement("canvas"), { width: Math.max(8, Math.round(image.width * scale)), height: Math.max(8, Math.round(image.height * scale)) });
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+    return traceOutline(ctx.getImageData(0, 0, canvas.width, canvas.height));
+}
+
+async function loadTexture(url, id, renderer = null) {
     try {
         const texture = await new THREE.TextureLoader().loadAsync(url);
         texture.colorSpace = THREE.SRGBColorSpace;
+        // Pictures seen at a slant, like a board lying flat, stay sharp.
+        if (renderer) texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
         return texture;
     } catch {
         throw new Error(`the picture for "${id}" could not be loaded`);
@@ -214,7 +230,7 @@ export async function renderScene(spec, { root, makeLabel, inPlace = false }) {
         if (def.type === "group") obj = new THREE.Group();
         else if (def.type === "text" && board) obj = printed(def, board, num(def.size?.[0] ?? def.size, foot ? Math.min(...foot) * 0.8 : board.w * 0.03));
         else if (def.type === "text") obj = makeLabel(THREE, def.text, null, { size: num(def.size?.[0] ?? def.size, unit * 0.09) });
-        else if (def.type === "base") obj = baseOf(def, material(), paint({ color: "#d4a84b", metalness: 1, roughness: 0.3 }));
+        else if (def.type === "base") obj = baseOf(def, material(), paint({ color: "#d4a84b", metalness: 1, roughness: 0.3 }), def.picture ? await loadTexture(def.picture, def.id, renderer).catch(() => null) : null);
         else if (def.type === "part") obj = buildPart(def, foot ? [foot[0], num(def.height, NaN), foot[1]] : sizeOf(def.size, 3, 1), paint);
         else if (def.type === "arrow") obj = arrowFor(def, material());
         else if (def.type === "image") {
@@ -432,6 +448,15 @@ export async function renderScene(spec, { root, makeLabel, inPlace = false }) {
             items.get(id).obj.removeFromParent();
             for (const key of [...items.keys()]) if (key === id || key.startsWith(`${id}#`)) items.delete(key);
         }
+    }
+
+    // A loft or base given its picture but no outline takes its true outline from the picture; a loft that cannot be traced keeps the picture's box.
+    for (const [index, def] of defs.entries()) {
+        if (!["loft", "base"].includes(def.type) || !isRegion(def.region) || (Array.isArray(def.outline) && def.outline.length >= 3)) continue;
+        const r = def.region;
+        const found = def.picture ? await outlineOf(def.picture).catch(() => null) : null;
+        const outline = found?.map(([u, v]) => [r.x + u * r.w, r.y + v * r.h]) ?? (def.type === "loft" ? [[r.x, r.y], [r.x + r.w, r.y], [r.x + r.w, r.y + r.h], [r.x, r.y + r.h]] : null);
+        if (outline) defs[index] = { ...def, outline };
     }
 
     // Bases and traced lofts first, for parts to sit on; free text last, as it is sized from the rest.

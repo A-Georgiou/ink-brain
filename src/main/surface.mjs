@@ -128,7 +128,11 @@ export class Surface {
         if (problem) return { text: `The scene was not shown: ${problem}.`, failed: true };
         const objects = [];
         for (const object of scene.objects) {
-            if (object.type !== "image") objects.push(object);
+            const traceable = object.type === "loft" && isRegion(object.region) && !(Array.isArray(object.outline) && object.outline.length >= 3);
+            if (object.type === "base" || traceable) {
+                // A base wears its own picture, so it looks like the user's very one, and a base or loft without an outline is traced from it.
+                objects.push({ ...object, picture: await Promise.resolve(this.regionImage?.(object.region)).catch(() => null) });
+            } else if (object.type !== "image") objects.push(object);
             else {
                 try {
                     objects.push({ ...object, src: undefined, image: this.readImage(object.src) });

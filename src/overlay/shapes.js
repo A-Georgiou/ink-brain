@@ -229,8 +229,8 @@ function roundedRect(w, d, radius) {
     return shape.lineTo(-x + r, y).absarc(-x + r, y - r, r, Math.PI / 2, Math.PI).lineTo(-x, -y + r).absarc(-x + r, -y + r, r, Math.PI, Math.PI * 1.5);
 }
 
-// A base traced in screenshot pixels: size is [width, thickness] and depth keeps the picture's aspect.
-export function baseOf(def, material, gold) {
+// A base traced in screenshot pixels: size is [width, thickness] and depth keeps the picture's aspect; photo, if given, covers its faces.
+export function baseOf(def, material, gold, photo = null) {
     const r = def.region;
     const w = Math.max(0.001, num(def.size?.[0] ?? def.size, 10));
     const t = Math.max(0.0005, num(def.size?.[1], w * 0.02));
@@ -244,7 +244,10 @@ export function baseOf(def, material, gold) {
     const geometry = new THREE.ExtrudeGeometry(shape, { depth: t * 0.84, bevelEnabled: true, bevelThickness: t * 0.08, bevelSize: t * 0.08, bevelSegments: 2, curveSegments: 24 });
     geometry.translate(0, 0, -t * 0.42);
     if (!upright) geometry.rotateX(-Math.PI / 2);
-    const mesh = new THREE.Mesh(geometry, material);
+    // Cap UVs are the shape's own coordinates, so the photo is stretched from the picture's corners onto the board's.
+    if (photo) Object.assign(photo, { offset: new THREE.Vector2(0.5, 0.5), repeat: new THREE.Vector2(1 / w, 1 / d) });
+    const top = new THREE.MeshStandardMaterial({ map: photo, roughness: 0.55, metalness: 0.05, transparent: material.transparent, opacity: material.opacity });
+    const mesh = new THREE.Mesh(geometry, photo ? [top, material] : material);
     const face = t / 2 + t * 0.01;
     // Circuit boards get plated rings around their holes.
     for (const [c, radius] of def.material === "pcb" ? holes : []) {
