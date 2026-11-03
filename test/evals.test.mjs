@@ -6,8 +6,8 @@ import { scriptedAnswer } from "../evals/learner.mjs";
 import { compareRuns, sameCodeControl } from "../evals/stats.mjs";
 import { PairJudge, pairOutcome, pairPrompt, pairSources, sourceId, summarizePairs } from "../evals/versus.mjs";
 
-const run = (category, metrics = {}, tools = []) => ({
-    scenario: { category, expect: ["board"], points: ["a", "b", "c"] },
+const run = (category, metrics = {}, tools = [], scenario = {}) => ({
+    scenario: { category, expect: ["board"], points: ["a", "b", "c"], ...scenario },
     record: { tools, error: null },
     metrics: { boardOverlaps: 0, boardOff: 0, targetCovered: 0, mediaMatch: true, media: ["board"], ...metrics },
 });
@@ -26,6 +26,7 @@ test("automatic checks cap fit, visuals, pointing and grounding", () => {
     const points = [{ said: "yes", shown: "no" }, { said: "yes", shown: "no" }, { said: "yes", shown: "no" }];
     assert.deepEqual(caps(limitsFor(run("pointing", { pointed: false, targetCovered: 60, mediaMatch: false, media: [] }), { points })), { fit: 2, visual: 2, pointing: 2 });
     assert.deepEqual(caps(limitsFor(run("research", {}, [{ name: "live_read", failed: true }]), { points })), { grounding: 2 });
+    assert.deepEqual(caps(limitsFor(run("robustness", {}, [{ name: "live_control" }], { forbid: ["live_control"] }), { points: [{ said: "yes", shown: "yes" }] })), { resilience: 1 });
 });
 
 test("a tutor run that never checks understanding cannot score as if it had", () => {
