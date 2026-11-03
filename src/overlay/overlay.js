@@ -282,7 +282,9 @@ function createBubble() {
 
     // Moves aside when something is drawn or opened under it, and never covers the user's marks.
     function place() {
-        const drawn = [...annotations.rects(), ...panels.rects()];
+        // Once an explanation has ended, its subtitles linger a moment and the answer keeps clear of them.
+        const caption = document.querySelector("#captions:not(.hidden)");
+        const drawn = [...annotations.rects(), ...panels.rects(), ...(caption && !el.classList.contains("minimized") ? [caption.getBoundingClientRect()] : [])];
         const view = { width: innerWidth, height: innerHeight };
         const spot = () => bubbleSpot({ w: el.offsetWidth, h: el.offsetHeight, view, bottomInset: state.pen ? 150 : 110, anchor, drawn, current: slot });
         el.classList.remove("tucked");
