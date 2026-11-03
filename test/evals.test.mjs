@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { conversationMetrics, marksFor, pickFrames, turnsOf } from "../evals/conversation.mjs";
 import { judgeDisagreement, limitsFor, overall, passes } from "../evals/judge.mjs";
 import { measureLayout } from "../evals/layout.mjs";
 import { scriptedAnswer } from "../evals/learner.mjs";
@@ -162,4 +163,31 @@ test("pairwise judges see both positions and normalize their votes to the candid
     const judge = new PairJudge({ client, models: ["m1", "m2"], effort: "medium", workspace: "." });
     const verdict = await judge.compare({ scenario: { category: "3d", ask: "How?", points: ["the answer"], expect: ["scene"] }, meta: { title: "Test" }, screen: file, left: run("baseline"), right: run("candidate") });
     assert.deepEqual([verdict.preference, verdict.orderDisagreements, calls, deleted.length], [1, 0, 4, 4]);
+});
+
+test("a conversation plays its own turns, and marks follow the user's pen", () => {
+    const meta = { marks: [{ type: "stroke", points: [[1, 2]] }] };
+    const scenario = { ask: "one", turns: [{ ask: "first" }, { ask: "second" }, { ask: "third", mark: { x: 10, y: 20, w: 30, h: 10 } }] };
+    assert.deepEqual(turnsOf({ ask: "one" }), [{ ask: "one" }]);
+    assert.equal(turnsOf(scenario).length, 3);
+    assert.deepEqual(marksFor(scenario.turns[0], meta, 0), meta.marks);
+    assert.deepEqual(marksFor(scenario.turns[1], meta, 1), []);
+    const fresh = marksFor(scenario.turns[2], meta, 2);
+    const [xs, ys] = [fresh[0].points.map(([x]) => x), fresh[0].points.map(([, y]) => y)];
+    assert.equal(fresh[0].points.length > 10, true);
+    assert.equal(Math.min(...xs) < 10 && Math.max(...xs) > 40, true, "the loop goes around the region");
+    assert.equal(Math.min(...ys) < 20 && Math.max(...ys) > 30, true, "the loop goes around the region");
+});
+
+test("panels left piled up at the end of a conversation cap the visuals", () => {
+    const record = {
+        turns: [{ at: 0, tools: [{ name: "live_explain" }] }, { at: 100, tools: [{ name: "live_panel" }] }],
+        frames: [{ at: 0, layout: { panels: [1] } }, { at: 120, layout: { panels: [1, 2, 3, 4] } }, { at: 200, layout: { panels: [1, 2, 3] } }],
+    };
+    const metrics = conversationMetrics(record);
+    assert.deepEqual(metrics, { turns: 2, panelsAtEnd: 3, panelsAtMost: 4, stagesPerTurn: [1, 1] });
+    const limits = limitsFor(run("conversation", metrics), { points: [{ said: "yes", shown: "yes" }, { said: "yes", shown: "yes" }, { said: "yes", shown: "yes" }] });
+    assert.deepEqual(caps(limits), { visual: 3 });
+    assert.deepEqual(caps(limitsFor(run("conversation", { ...metrics, panelsAtEnd: 1 }), { points: [{ said: "yes", shown: "yes" }, { said: "yes", shown: "yes" }, { said: "yes", shown: "yes" }] })), {});
+    assert.equal(pickFrames(record, (frames) => frames, 4).length, 3);
 });

@@ -14,6 +14,7 @@ import { describePage, Reader, siteOf } from "../src/main/reader.mjs";
 import { cleanId, Surface } from "../src/main/surface.mjs";
 import { boundsOfMarks, cropAround, isRegion, panelRect } from "../src/shared/geometry.mjs";
 import { STANDALONE_TOOLS, toToolResult } from "../src/shared/live-tools.mjs";
+import { conversationMetrics, marksFor, pickFrames, turnsOf } from "./conversation.mjs";
 import { Judge } from "./judge.mjs";
 import { measureLayout } from "./layout.mjs";
 import { recordCheck } from "./learner.mjs";
@@ -66,20 +67,25 @@ async function play(scenario, dir, { reader, client, replay = null }) {
     const screen = `data:image/jpeg;base64,${jpeg.toString("base64")}`;
     const workspace = path.join(WORK, path.basename(dir));
     const roots = [path.join(os.homedir(), ".copilot", "session-state"), workspace];
-    const record = { text: "", captions: [], tools: [], frames: [], console: [], checks: [], controls: false, error: null, firstWords: null, firstVisual: null, writing: null, streamed: null, total: null };
+    const asked = turnsOf(scenario);
+    const many = asked.length > 1;
+    const record = { text: "", captions: [], tools: [], frames: [], console: [], checks: [], controls: false, error: null, firstWords: null, firstVisual: null, writing: null, streamed: null, total: null, ...(many ? { turns: [] } : {}) };
+    let turn = { ask: asked[0].ask, at: 0, text: "", captions: [], tools: [], firstWords: null, firstVisual: null, error: null };
     const stage = await openStage({ image: screen, title: meta.title, onConsole: (line) => record.console.push(line.slice(0, 400)) });
     let start = Date.now();
     const elapsed = () => Date.now() - start;
     const shots = [];
     let shotCount = 0;
+    let turnNo = 1;
     const snap = (tag, delay) => {
-        const file = `${String(++shotCount).padStart(2, "0")}-${tag.replace(/\W+/g, "-")}.jpg`;
+        const label = many ? `turn ${turnNo} ${tag}` : tag;
+        const file = `${String(++shotCount).padStart(2, "0")}-${label.replace(/\W+/g, "-")}.jpg`;
         shots.push(
             sleep(delay).then(async () => {
                 const frame = await stage.frame().catch(() => null);
                 if (!frame) return;
                 fs.writeFileSync(path.join(dir, file), frame.jpeg);
-                record.frames.push({ file, tag, at: elapsed(), layout: frame.layout, boards: frame.boards });
+                record.frames.push({ file, tag: label, at: elapsed(), layout: frame.layout, boards: frame.boards });
                 if (frame.lost) record.glLost = true;
             }),
         );
@@ -94,7 +100,10 @@ async function play(scenario, dir, { reader, client, replay = null }) {
     const surface = new Surface({
         // The first visual is when something first appears on screen, which a streamed explanation does before its call finishes.
         overlayCall(method, params, timeoutMs) {
-            if (VISUAL_CALLS.has(method)) record.firstVisual ??= elapsed();
+            if (VISUAL_CALLS.has(method)) {
+                record.firstVisual ??= elapsed();
+                turn.firstVisual ??= elapsed();
+            }
             return stage.call(method, params, timeoutMs);
         },
         geometry: () => GEOMETRY,
@@ -162,6 +171,7 @@ async function play(scenario, dir, { reader, client, replay = null }) {
             if (event.controls) record.controls = true;
             if (event.type !== "step") return;
             record.captions.push(event.text);
+            turn.captions.push(event.text);
             snap(`step ${event.index + 1}`, 2_200);
         },
         keepSeconds: CONFIG.explanationTtlSeconds,
@@ -169,6 +179,7 @@ async function play(scenario, dir, { reader, client, replay = null }) {
     const runTool = async (name, args, callId) => {
         const entry = { name, at: elapsed(), args };
         record.tools.push(entry);
+        turn.tools.push(entry);
         stage.send("live:activity", { name, origin: "Ink Brain" });
         const result = await surface.execute(name, args, "Ink Brain", callId).catch((error) => ({ text: `${name} failed: ${error.message}`, failed: true }));
         Object.assign(entry, { ms: elapsed() - entry.at, failed: Boolean(result.failed), result: String(result.text ?? "").slice(0, 600) });
@@ -186,8 +197,10 @@ async function play(scenario, dir, { reader, client, replay = null }) {
     let sawDelta = false;
     const append = (text) => {
         record.firstWords ??= elapsed();
+        turn.firstWords ??= elapsed();
         record.text += text;
-        stage.send("live:turn", { type: "delta", id: 1, text });
+        turn.text += text;
+        stage.send("live:turn", { type: "delta", id: turnNo, text });
     };
     brain.on("delta", (text) => {
         if (!text) return;
@@ -199,61 +212,83 @@ async function play(scenario, dir, { reader, client, replay = null }) {
         if (sawDelta || text) append("\n\n");
         sawDelta = false;
     });
-    brain.on("preparing", ({ name }) => stage.send("live:turn", { type: "preparing", id: 1, name }));
+    brain.on("preparing", ({ name }) => stage.send("live:turn", { type: "preparing", id: turnNo, name }));
     brain.on("input", ({ id, name, delta }) => {
         if (name === "live_explain") record.writing ??= elapsed();
         if (!STREAM || name !== "live_explain" || !explainer.feed(id, delta)) return;
         record.streamed = elapsed();
-        stage.send("live:turn", { type: "tool", id: 1, name });
+        stage.send("live:turn", { type: "tool", id: turnNo, name });
     });
     brain.on("tool", ({ name }) => {
-        stage.send("live:turn", { type: "tool", id: 1, name });
-        if (!OWN_TOOLS.has(name)) record.tools.push({ name, at: elapsed(), args: {} });
+        stage.send("live:turn", { type: "tool", id: turnNo, name });
+        if (OWN_TOOLS.has(name)) return;
+        const entry = { name, at: elapsed(), args: {} };
+        record.tools.push(entry);
+        turn.tools.push(entry);
     });
 
     try {
-        const marks = meta.marks;
-        const zoom = marks.length ? cropAround(boundsOfMarks(marks), SCREEN.width, SCREEN.height) : null;
-        const shot = marks.length ? await stage.call("compose", { image: screen, marks, crop: zoom, modelWidth: SCREEN.width, modelHeight: SCREEN.height }, 15_000) : { full: jpeg.toString("base64"), crop: null };
-        fs.writeFileSync(path.join(dir, "00-screen.jpg"), Buffer.from(shot.full, "base64"));
-        const end = marks.at(-1)?.points.at(-1);
-        const prompt = buildTurnPrompt({ text: scenario.ask, marks, geometry: GEOMETRY, cursor: end && { x: end[0], y: end[1] }, front: { app: "Google Chrome", title: meta.title }, crop: zoom, turnId: "1" });
-        const attachments = [shot.full, shot.crop].filter(Boolean).map((data, i) => ({ type: "blob", data, mimeType: "image/jpeg", displayName: i ? "zoom.jpg" : "screen.jpg" }));
-        const begin = () => {
-            start = Date.now();
-            stage.send("live:state", overlayState(true));
-            stage.send("live:turn", { type: "start", id: 1, question: scenario.ask, target: "Ink Brain", anchor: boundsOfMarks(marks) });
-        };
-        let error = null;
-        if (replay) {
-            // Plays a recorded turn's own tool calls again at their times, so only the overlay's rendering differs.
-            begin();
-            for (const tool of replay.tools) {
-                await sleep(tool.at - elapsed());
-                if (record.firstWords == null && replay.firstWords != null && replay.firstWords <= tool.at) append(replay.text);
-                if (OWN_TOOLS.has(tool.name) && tool.name !== "live_read") await runTool(tool.name, tool.args, `replay-${record.tools.length}`);
-                else record.tools.push(tool);
+        // A conversation plays its turns one after another in the same session, on the screen the earlier turns left behind.
+        for (const [index, spec] of asked.entries()) {
+            turnNo = index + 1;
+            const marks = marksFor(spec, meta, index);
+            const zoom = marks.length ? cropAround(boundsOfMarks(marks), SCREEN.width, SCREEN.height) : null;
+            const shot = marks.length ? await stage.call("compose", { image: screen, marks, crop: zoom, modelWidth: SCREEN.width, modelHeight: SCREEN.height }, 15_000) : { full: jpeg.toString("base64"), crop: null };
+            if (!index) fs.writeFileSync(path.join(dir, "00-screen.jpg"), Buffer.from(shot.full, "base64"));
+            const end = marks.at(-1)?.points.at(-1);
+            const prompt = buildTurnPrompt({ text: spec.ask, marks, geometry: GEOMETRY, cursor: end && { x: end[0], y: end[1] }, front: { app: "Google Chrome", title: meta.title }, crop: zoom, turnId: String(turnNo) });
+            const attachments = [shot.full, shot.crop].filter(Boolean).map((data, i) => ({ type: "blob", data, mimeType: "image/jpeg", displayName: i ? "zoom.jpg" : "screen.jpg" }));
+            turn = { ask: spec.ask, marked: Boolean(marks.length), at: index ? elapsed() : 0, text: "", captions: [], tools: [], firstWords: null, firstVisual: null, error: null };
+            if (many) record.turns.push(turn);
+            // A fresh circle partway through is on no later screenshot, so the judge gets it as its own frame.
+            if (index && marks.length) {
+                const file = `${String(++shotCount).padStart(2, "0")}-turn-${turnNo}-circled.jpg`;
+                fs.writeFileSync(path.join(dir, file), Buffer.from(shot.full, "base64"));
+                record.frames.push({ file, tag: `turn ${turnNo} what they circled`, at: elapsed(), layout: null, boards: [] });
             }
-            if (record.firstWords == null && replay.text) append(replay.text);
-        } else {
-            await brain.ensure();
-            const finished = new Promise((resolve) => {
-                brain.once("idle", () => resolve(null));
-                brain.once("error", resolve);
-            });
-            begin();
-            await brain.send({ prompt, attachments });
-            error = await Promise.race([finished, sleep(TURN_TIMEOUT_MS).then(() => new Error("the turn timed out"))]);
+            const begin = () => {
+                if (!index) start = Date.now();
+                stage.send("live:state", overlayState(true));
+                stage.send("live:turn", { type: "start", id: turnNo, question: spec.ask, target: "Ink Brain", anchor: boundsOfMarks(marks) });
+            };
+            let error = null;
+            const past = replay && (replay.turns?.[index] ?? (index ? null : replay));
+            if (replay) {
+                // Plays a recorded turn's own tool calls again at their times, so only the overlay's rendering differs.
+                begin();
+                for (const tool of past?.tools ?? []) {
+                    await sleep(tool.at - elapsed());
+                    if (turn.firstWords == null && past.firstWords != null && past.firstWords <= tool.at) append(past.text);
+                    if (OWN_TOOLS.has(tool.name) && tool.name !== "live_read") await runTool(tool.name, tool.args, `replay-${record.tools.length}`);
+                    else {
+                        record.tools.push(tool);
+                        turn.tools.push(tool);
+                    }
+                }
+                if (turn.firstWords == null && past?.text) append(past.text);
+            } else {
+                await brain.ensure();
+                const finished = new Promise((resolve) => {
+                    brain.once("idle", () => resolve(null));
+                    brain.once("error", resolve);
+                });
+                begin();
+                await brain.send({ prompt, attachments });
+                error = await Promise.race([finished, sleep(TURN_TIMEOUT_MS).then(() => new Error("the turn timed out"))]);
+            }
+            record.total = elapsed();
+            turn.total = elapsed() - turn.at;
+            turn.error = error?.message ?? null;
+            record.error = turn.error ?? record.error;
+            if (error) await brain.abort();
+            explainer.close();
+            stage.send("live:turn", { type: "end", id: turnNo, error: turn.error ?? undefined });
+            stage.send("live:state", overlayState(false));
+            await Promise.all(shots);
+            snap(index === asked.length - 1 ? "final" : "answered", 2_500);
+            await Promise.all(shots);
+            if (error) break;
         }
-        record.total = elapsed();
-        record.error = error?.message ?? null;
-        if (error) await brain.abort();
-        explainer.close();
-        stage.send("live:turn", { type: "end", id: 1, error: record.error ?? undefined });
-        stage.send("live:state", overlayState(false));
-        await Promise.all(shots);
-        snap("final", 2_500);
-        await Promise.all(shots);
         record.frames.sort((a, b) => a.at - b.at);
         return record;
     } finally {
@@ -308,6 +343,7 @@ function measure(scenario, meta, record) {
         targetCovered: Math.round(100 * Math.min(1, Math.max(0, ...covered))),
         pointed: scenario.mark === false ? pointedAt(t, record.tools) : undefined,
         reads: record.tools.filter((tool) => tool.name === "live_read").map((tool) => tool.args.url),
+        ...(record.turns ? conversationMetrics(record) : {}),
     };
 }
 
@@ -331,6 +367,7 @@ async function evaluatePair(scenario, attempt, pairJudge) {
     const id = attempt > 1 ? `${scenario.id}~${attempt}` : scenario.id;
     let verdict;
     try {
+        if (scenario.turns) throw new Error("pairwise judging covers single-turn scenarios only");
         const meta = JSON.parse(fs.readFileSync(path.join(FIXTURES, `${fixtureOf(scenario)}.json`), "utf8"));
         const [left, right] = PAIR_SOURCES.map((source) => storedRun(source.label, sourceId(source, scenario.id, attempt), scenario, meta));
         if (!fs.readFileSync(left.screen).equals(fs.readFileSync(right.screen))) throw new Error(`${id} used different starting screens`);
@@ -387,7 +424,7 @@ async function evaluate(scenario, attempt, { reader, client, judge }) {
             metrics,
             reference: fs.existsSync(referenceFile) ? fs.readFileSync(referenceFile, "utf8") : null,
             screen: path.join(dir, "00-screen.jpg"),
-            frames: pick(record.frames).map((frame) => ({ ...frame, path: path.join(dir, frame.file) })),
+            frames: (record.turns ? pickFrames(record, pick) : pick(record.frames)).map((frame) => ({ ...frame, path: path.join(dir, frame.file) })),
         };
         verdict = await judge.score(input).catch((error) => ({ judgeError: error.message }));
     }
