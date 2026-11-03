@@ -583,7 +583,7 @@ body.listening #prompt::placeholder {
 }
 
 #bubble.slim {
-    width: 280px;
+    width: 244px;
 }
 
 #bubble.placing {
@@ -660,6 +660,16 @@ body:not(.speaking):not(.thinking) .bubble-stop {
     height: 10px;
     background: radial-gradient(circle, var(--accent) 3px, transparent 4px) 0 50% / 11px 10px repeat-x;
     animation: dots 1s steps(4) infinite;
+}
+
+#bubble.minimized,
+#bubble.tucked:not(:hover) {
+    width: auto;
+    max-width: 240px;
+}
+
+body.checking #bubble {
+    display: none !important;
 }
 
 #bubble.minimized .bubble-question,
@@ -1028,8 +1038,8 @@ body:not(.speaking):not(.thinking) .bubble-stop {
 #check-card {
     top: 64px;
     left: 16px;
-    width: min(360px, 34vw);
-    padding: 16px 16px 12px;
+    width: min(244px, 30vw);
+    padding: 12px 14px 10px;
     z-index: 940;
 }
 
@@ -1043,8 +1053,8 @@ body:not(.speaking):not(.thinking) .bubble-stop {
 }
 
 .check-question {
-    margin: 0 0 10px;
-    font-size: 16px;
+    margin: 0 0 8px;
+    font-size: 14.5px;
     line-height: 1.35;
 }
 

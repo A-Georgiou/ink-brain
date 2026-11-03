@@ -27,7 +27,7 @@ $(".bubble-close").innerHTML = ICONS.close;
 const TOOL_LABELS = {
     live_annotate: "Sketching on your screen",
     live_explain: "Explaining",
-    live_check: "Checking you understood",
+    live_check: "Your turn",
     live_panel: "Building a live view",
     live_cutout: "Pulling it out",
     live_image: "Showing a render",
@@ -300,23 +300,29 @@ function createBubble() {
         const drawn = [...annotations.rects(), ...panels.rects(), checkCard.rect(), dockRect(), ...(caption && (!el.classList.contains("minimized") || caption.classList.contains("docked")) ? [caption.getBoundingClientRect()] : [])].filter(Boolean);
         const view = { width: innerWidth, height: innerHeight };
         const quiet = inkUnder();
-        const spot = () => bubbleSpot({ w: el.offsetWidth, h: el.offsetHeight, view, bottomInset: state.pen ? 150 : 110, anchor, drawn, current: slot, ink: quiet });
+        const isCollapsed = () => el.classList.contains("minimized") || el.classList.contains("tucked");
+        const spot = () => {
+            const collapsed = isCollapsed();
+            const weightedInk = quiet && ((box) => quiet(box) * (collapsed ? 12 : 2.5));
+            return bubbleSpot({ w: el.offsetWidth, h: el.offsetHeight, view, bottomInset: state.pen ? 150 : 110, anchor: collapsed ? null : anchor, drawn, current: collapsed ? null : slot, ink: weightedInk });
+        };
         // Where the screen is busy, a slimmer bubble can fit a quiet column instead of covering text.
         const fit = () => {
             const slimmed = el.classList.contains("slim");
             el.classList.remove("slim");
             const wide = spot();
-            if (!quiet || quiet(wide.box) < (wide.box.w * wide.box.h) / 1280) return wide;
+            if (isCollapsed() || !quiet || quiet(wide.box) <= (slimmed ? 8 : 4)) return wide;
             el.classList.add("slim");
             const slim = spot();
-            if (slim.box.h <= 280 && slim.cost < wide.cost && quiet(slim.box) <= (slimmed ? 6 : 2)) return slim;
+            if (slim.box.h <= 360 && (slim.cost < wide.cost || quiet(slim.box) * 2 < quiet(wide.box))) return slim;
             el.classList.remove("slim");
             return wide;
         };
         el.classList.remove("tucked");
         let pick = fit();
-        // A finished answer with nowhere to go but over a panel tucks down to its header; hovering it opens it again.
-        if (!active && overlapArea(pick.box, panels.rects()) > pick.box.w * pick.box.h * 0.08) {
+        // A finished answer with nowhere to go but over a panel or busy reading text alongside an explainer stage tucks down to its header; hovering it opens it again.
+        const hasStage = [...document.querySelectorAll("#panels .panel:not(.away) .panel-kind")].some((n) => n.textContent === "Explainer");
+        if (!active && (overlapArea(pick.box, panels.rects()) > pick.box.w * pick.box.h * 0.08 || (hasStage && quiet && quiet(pick.box) > 8))) {
             el.classList.add("tucked");
             pick = fit();
         }
@@ -399,7 +405,10 @@ const checkCard = (() => {
     let timer = 0;
     const hide = () => {
         clearTimeout(timer);
+        if (card.classList.contains("hidden")) return;
         card.classList.add("hidden");
+        document.body.classList.remove("checking");
+        bubble.reflow();
     };
     card.addEventListener("click", (event) => {
         const button = event.target.closest("button[data-choice]");
@@ -410,9 +419,9 @@ const checkCard = (() => {
     });
     // Near what they circled and beside the stage, never over them, and keeping off busy text where it can.
     const place = () => {
-        const drawn = [...annotations.rects(), ...panels.rects(), bubble.rect(), dockRect()].filter(Boolean);
+        const drawn = [...annotations.rects(), ...panels.rects(), dockRect()].filter(Boolean);
         const quiet = inkUnder();
-        const { box } = bubbleSpot({ w: card.offsetWidth, h: card.offsetHeight, view: { width: innerWidth, height: innerHeight }, bottomInset: 110, anchor: lastAnchor, drawn, ink: quiet && ((box) => quiet(box) * 0.3) });
+        const { box } = bubbleSpot({ w: card.offsetWidth, h: card.offsetHeight, view: { width: innerWidth, height: innerHeight }, bottomInset: 110, anchor: lastAnchor, drawn, ink: quiet });
         Object.assign(card.style, { left: `${Math.round(box.x)}px`, top: `${Math.round(box.y)}px` });
     };
     return {
@@ -438,6 +447,7 @@ const checkCard = (() => {
                     return button;
                 }),
             );
+            document.body.classList.add("checking");
             card.classList.remove("hidden");
             place();
             bubble.reflow();
@@ -471,10 +481,10 @@ const captions = (() => {
         Object.assign(el.style, { left: "", bottom: "", maxWidth: "" });
         const stage = scene && panels.rectOf(scene);
         el.classList.toggle("docked", Boolean(stage));
-        // A narrow stage gets smaller, wider subtitles, so they take fewer lines off the model.
-        el.classList.toggle("narrow", Boolean(stage) && stage.width < 600);
+        // A narrow or short stage gets smaller, wider subtitles, so they take fewer lines off the model.
+        el.classList.toggle("narrow", Boolean(stage) && (stage.width <= 680 || stage.height <= 460));
         if (stage) {
-            Object.assign(el.style, { left: `${Math.round(stage.left + stage.width / 2)}px`, maxWidth: `${Math.round(stage.width - (stage.width < 600 ? 28 : 48))}px` });
+            Object.assign(el.style, { left: `${Math.round(stage.left + stage.width / 2)}px`, maxWidth: `${Math.round(stage.width - (stage.width <= 680 || stage.height <= 460 ? 28 : 48))}px` });
             // A 3D model needs every pixel of its stage, so its subtitles sit under it when the screen has room.
             const under = is3D && innerHeight - stage.bottom >= el.offsetHeight + 26;
             el.style.bottom = `${Math.round(innerHeight - stage.bottom - (under ? el.offsetHeight + 12 : -14))}px`;

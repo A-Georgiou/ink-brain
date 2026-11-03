@@ -341,12 +341,15 @@ export class Panels {
         const width = el.offsetWidth;
         const height = this.#naturalHeight(el);
         el.style.height = `${height}px`;
-        if (Math.abs(height - previous) < 2) return;
-        let spot = panel.autoPlaced ? this.#place(width, height, panel, null, [1]) : { x: el.offsetLeft, y: el.offsetTop };
         const target = panel.autoPlaced && this.target();
+        const others = target ? [...this.#panels.values()].filter((p) => p !== panel && p.el.isConnected && !p.el.classList.contains("away")).map((p) => asRect(p.el.getBoundingClientRect())) : [];
+        const current = { x: el.offsetLeft, y: el.offsetTop, w: width, h: height };
+        const busy = (this.ink()?.(current) ?? 0) > 8;
+        if (Math.abs(height - previous) < 2 && !(target && (busy || crowds(current, asRect(target), others)))) return;
+        let spot = panel.autoPlaced ? this.#place(width, height, panel, null, [1]) : { x: el.offsetLeft, y: el.offsetTop };
         if (target) {
-            const others = [...this.#panels.values()].filter((p) => p !== panel && p.el.isConnected && !p.el.classList.contains("away")).map((p) => asRect(p.el.getBoundingClientRect()));
-            if (crowds({ x: spot.x, y: spot.y, w: width, h: height }, asRect(target), others)) spot = this.#clearSpot(panel, target, others) ?? spot;
+            const spotBox = { x: spot.x, y: spot.y, w: width, h: height };
+            if ((this.ink()?.(spotBox) ?? 0) > 8 || crowds(spotBox, asRect(target), others)) spot = this.#clearSpot(panel, target, others) ?? spot;
         }
         Object.assign(el.style, { width: `${spot.w ?? width}px`, height: `${spot.h ?? height}px` });
         el.style.left = `${clamp(spot.x, 16, innerWidth - el.offsetWidth - 16)}px`;
