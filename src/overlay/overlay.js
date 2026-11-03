@@ -50,6 +50,16 @@ let interactive = false;
 let lastAnchor = null;
 // How busy each part of the screen was when the turn began, so the answer can sit on a quiet part.
 let screenInk = null;
+// The dock in the bottom corner, which the answer and the check card keep clear of.
+const dockRect = () => {
+    const dock = $("#dock");
+    return dock.classList.contains("hidden") ? null : dock.getBoundingClientRect();
+};
+// How many busy cells of that screen a box would cover, or null before it has been measured.
+const inkUnder = () => {
+    const k = screenInk?.scale ?? 1;
+    return screenInk && ((box) => inkIn(screenInk.grid, { x: box.x * k, y: box.y * k, w: box.w * k, h: box.h * k }));
+};
 
 const ink = new Ink($("#ink"));
 const annotations = new Annotations({ svgRoot: $("#annotations"), labels: $("#labels"), boards: $("#boards"), pointer: $("#pointer"), ripples: $("#ripples") });
@@ -287,10 +297,9 @@ function createBubble() {
     function place() {
         // Once an explanation has ended, its subtitles linger a moment and the answer keeps clear of them.
         const caption = document.querySelector("#captions:not(.hidden)");
-        const drawn = [...annotations.rects(), ...panels.rects(), ...(caption && !el.classList.contains("minimized") ? [caption.getBoundingClientRect()] : [])];
+        const drawn = [...annotations.rects(), ...panels.rects(), checkCard.rect(), dockRect(), ...(caption && !el.classList.contains("minimized") ? [caption.getBoundingClientRect()] : [])].filter(Boolean);
         const view = { width: innerWidth, height: innerHeight };
-        const k = screenInk?.scale ?? 1;
-        const quiet = screenInk && ((box) => inkIn(screenInk.grid, { x: box.x * k, y: box.y * k, w: box.w * k, h: box.h * k }));
+        const quiet = inkUnder();
         const spot = () => bubbleSpot({ w: el.offsetWidth, h: el.offsetHeight, view, bottomInset: state.pen ? 150 : 110, anchor, drawn, current: slot, ink: quiet });
         // Where the screen is busy, a slimmer bubble can fit a quiet column instead of covering text.
         const fit = () => {
@@ -399,7 +408,21 @@ const checkCard = (() => {
         button.classList.add("picked");
         api.command("checkAnswer", { id: button.dataset.choice });
     });
+    // Near what they circled and beside the stage, never over them, and keeping off busy text where it can.
+    const place = () => {
+        const drawn = [...annotations.rects(), ...panels.rects(), bubble.rect(), dockRect()].filter(Boolean);
+        const quiet = inkUnder();
+        const { box } = bubbleSpot({ w: card.offsetWidth, h: card.offsetHeight, view: { width: innerWidth, height: innerHeight }, bottomInset: 110, anchor: lastAnchor, drawn, ink: quiet && ((box) => quiet(box) * 0.3) });
+        Object.assign(card.style, { left: `${Math.round(box.x)}px`, top: `${Math.round(box.y)}px` });
+    };
     return {
+        rect: () => (card.classList.contains("hidden") ? null : card.getBoundingClientRect()),
+        // Once the turn is over the card has done its job.
+        settle() {
+            if (card.classList.contains("hidden")) return;
+            clearTimeout(timer);
+            timer = setTimeout(hide, 1500);
+        },
         show({ question, choices }) {
             clearTimeout(timer);
             card.querySelector(".check-question").textContent = question;
@@ -416,13 +439,15 @@ const checkCard = (() => {
                 }),
             );
             card.classList.remove("hidden");
+            place();
+            bubble.reflow();
         },
         pick({ id, correct } = {}) {
             const button = [...card.querySelectorAll("button")].find((el) => el.dataset.choice === id);
             if (button) button.classList.add("picked", correct ? "right" : "wrong");
             for (const el of card.querySelectorAll("button")) el.disabled = true;
             note.textContent = id ? (correct ? "That's the one." : "Not quite. Listen for why.") : "Say a bit more, or pick one.";
-            timer = setTimeout(hide, 45_000);
+            timer = setTimeout(hide, 20_000);
         },
         hide,
     };
@@ -505,6 +530,7 @@ api.on("live:turn", (event) => {
     else if (event.type === "status") bubble.activity(event.text);
     else if (event.type === "end") {
         pages.endTurn();
+        checkCard.settle();
         bubble.end(event);
     } else if (event.type === "say") bubble.say(event.text);
 });
