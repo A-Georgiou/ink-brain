@@ -54,8 +54,9 @@ export function quietSpot(grid, box, { view, avoid = [], reach = 300, step = 12,
 }
 
 const isCallout = (shape) => shape.kind === "callout" && String(shape.text ?? "").trim() && Number.isFinite(shape.x) && Number.isFinite(shape.y);
+const isArrow = (shape) => shape.kind === "arrow" && shape.style !== "both" && [shape.from, shape.to].every((p) => Array.isArray(p) && p.length === 2 && p.every(Number.isFinite));
 
-export const hasCallouts = (shapes) => shapes.some(isCallout);
+export const needsSettling = (shapes) => shapes.some((shape) => isCallout(shape) || isArrow(shape));
 
 // Where a callout's handwriting goes, as the overlay places it: wrapped at 360 pixels, at `at` or up and aside of the target.
 function calloutBox(shape, view) {
@@ -76,14 +77,49 @@ function keepClear(shape) {
     return ["pulse", "pointer", "callout", "marker", "check", "cross"].includes(shape.kind) && Number.isFinite(shape.x) && Number.isFinite(shape.y) ? [{ x: shape.x - 20, y: shape.y - 20, w: 40, h: 40 }] : [];
 }
 
-// Moves each callout's handwriting off busy parts of the screen onto a quiet one nearby; its arrow still leads to the target.
-export function settleCallouts(shapes, grid, view) {
-    const avoid = shapes.flatMap(keepClear);
+// Cells with something in them along the line from a to b, leaving out the first skip pixels around the tip.
+function inkAlong(grid, [x0, y0], [x1, y1], skip = 30) {
+    const length = Math.hypot(x1 - x0, y1 - y0);
+    const cells = new Set();
+    for (let d = skip; d <= length; d += 6) {
+        const [x, y] = [x0 + ((x1 - x0) * d) / length, y0 + ((y1 - y0) * d) / length];
+        if (inkIn(grid, { x, y, w: 1, h: 1 })) cells.add(`${Math.floor(x / CELL)},${Math.floor(y / CELL)}`);
+    }
+    return cells.size;
+}
+
+// Where a pointing arrow starts: moved to a nearby direction and length that cross next to nothing, unless it joins other marks.
+function settleTail(shape, grid, view, aims) {
+    const [[fx, fy], [tx, ty]] = [shape.from, shape.to];
+    const length = Math.hypot(fx - tx, fy - ty);
+    if (length < 50 || aims.some((box) => overlapArea({ x: fx - 12, y: fy - 12, w: 24, h: 24 }, [box]) > 0)) return shape;
+    const inkOf = ([x, y]) => inkAlong(grid, [tx, ty], [x, y]) * 3 + inkIn(grid, { x: x - 12, y: y - 12, w: 24, h: 24 });
+    const here = inkOf(shape.from);
+    if (here < 6) return shape;
+    const angle = Math.atan2(fy - ty, fx - tx);
+    let best = null;
+    for (let turn = -70; turn <= 70; turn += 14) {
+        for (const reach of [0.6, 0.8, 1, 1.25, 1.6]) {
+            const radius = Math.min(260, Math.max(70, length * reach));
+            const point = [tx + radius * Math.cos(angle + (turn * Math.PI) / 180), ty + radius * Math.sin(angle + (turn * Math.PI) / 180)];
+            if (point[0] < 12 || point[1] < 12 || point[0] > view.width - 12 || point[1] > view.height - 12) continue;
+            const ink = inkOf(point);
+            const cost = ink * 10 + Math.abs(turn) * 0.8 + Math.abs(radius - length) * 0.3;
+            if (!best || cost < best.cost) best = { point, ink, cost };
+        }
+    }
+    return best && best.ink * 2 <= here ? { ...shape, from: best.point } : shape;
+}
+
+// Moves callout handwriting and arrow tails off busy parts of the screen onto quiet ones nearby; they still lead to what they point at.
+export function settleMarks(shapes, grid, view) {
+    const aims = shapes.flatMap(keepClear);
     return shapes.map((shape) => {
+        if (isArrow(shape)) return settleTail(shape, grid, view, aims);
         if (!isCallout(shape)) return shape;
         const box = calloutBox(shape, view);
-        const spot = quietSpot(grid, box, { view, avoid });
-        avoid.push(spot);
+        const spot = quietSpot(grid, box, { view, avoid: aims });
+        aims.push(spot);
         return spot === box ? shape : { ...shape, at: [spot.x + spot.w / 2, spot.y + spot.h / 2] };
     });
 }

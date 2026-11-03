@@ -247,6 +247,7 @@ test("pointing is checked strictly against the control, its look-alikes and the 
     const aim = (...shapes) => aimAt(meta, shapes);
     assert.deepEqual(aim({ kind: "arrow", from: [40, 40], to: [100, 114] }), { hit: true, steps: 1, of: 2, distance: 0, wrong: 0, onTop: 0 });
     assert.equal(aim({ kind: "arrow", from: [40, 40], to: [114, 114] }).onTop, 1);
+    assert.equal(aim({ kind: "marker", x: 114, y: 114, target: meta.target }).onTop, 0);
     assert.deepEqual(aim({ kind: "pulse", x: 148, y: 114 }), { hit: false, steps: 0, of: 2, distance: 20, wrong: 1, onTop: 0 });
     assert.equal(aim({ kind: "circle", x: 96, y: 96, w: 36, h: 36 }).hit, true);
     assert.equal(aim({ kind: "circle", x: 96, y: 96, w: 36, h: 36 }, { kind: "circle", x: 134, y: 100, w: 28, h: 28 }).wrong, 1);

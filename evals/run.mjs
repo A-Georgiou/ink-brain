@@ -12,7 +12,7 @@ import { APP_SCHEME, registerAppProtocol } from "../src/main/protocol.mjs";
 import { buildTurnPrompt, systemMessage } from "../src/main/prompt.mjs";
 import { describePage, Reader, siteOf } from "../src/main/reader.mjs";
 import { cleanId, Surface } from "../src/main/surface.mjs";
-import { inkGrid, inkIn, settleCallouts } from "../src/shared/calm.mjs";
+import { inkGrid, inkIn, settleMarks } from "../src/shared/calm.mjs";
 import { boundsOfMarks, cropAround, isRegion, panelRect } from "../src/shared/geometry.mjs";
 import { STANDALONE_TOOLS, toToolResult } from "../src/shared/live-tools.mjs";
 import { aimAt, drawnShapes } from "./aim.mjs";
@@ -120,12 +120,12 @@ async function play(scenario, dir, { reader, client, replay = null, grid }) {
         overlayCall,
         geometry: () => GEOMETRY,
         config: CONFIG,
-        // Marks snap onto the controls the fixture recorded, as the app does with the accessibility tree, and callouts settle onto quiet parts of the picture.
+        // Marks snap onto the controls the fixture recorded, as the app does with the accessibility tree, and callouts and arrow tails settle onto quiet parts of the picture.
         async snap(shapes) {
             return elements ? snapOnto(elements, shapes) : shapes;
         },
         async calm(shapes) {
-            const settled = settleCallouts(shapes, grid, SCREEN);
+            const settled = settleMarks(shapes, grid, SCREEN);
             record.drawn.push({ at: elapsed(), shapes: settled });
             return settled;
         },

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { anchorAt, pageState, pageTitle } from "../src/shared/anchors.mjs";
 import { clearSpot, validateBoard, withValues } from "../src/shared/board.mjs";
-import { inkGrid, inkIn, settleCallouts } from "../src/shared/calm.mjs";
+import { inkGrid, inkIn, settleMarks } from "../src/shared/calm.mjs";
 import { compile } from "../src/shared/mathexpr.mjs";
 import { validateScene } from "../src/shared/scene.mjs";
 import { traceOutline } from "../src/shared/trace.mjs";
@@ -189,7 +189,7 @@ test("marks beside a control carry its box, scaled with the screen, so it can be
     assert.deepEqual(shapeToOverlay({ kind: "marker", x: 20, y: 30, target: box }, 0.5).target, { x: 380, y: 446, w: 120, h: 56 });
 });
 
-test("callouts settle onto quiet parts of the screen, keep off what they point at and stay put when already quiet", () => {
+test("callouts and arrow tails settle onto quiet parts of the screen, keep off what they point at and stay put when already quiet", () => {
     const [width, height] = [400, 300];
     const data = new Uint8ClampedArray(width * height * 4).fill(255);
     for (let y = 100; y < 200; y++) for (let x = 60; x < 340; x++) if ((x + y) % 4 < 2) data.fill(20, (y * width + x) * 4, (y * width + x) * 4 + 3);
@@ -198,12 +198,17 @@ test("callouts settle onto quiet parts of the screen, keep off what they point a
     assert.ok(inkIn(grid, { x: 100, y: 120, w: 100, h: 30 }) > 10);
     assert.equal(inkIn(grid, { x: 20, y: 220, w: 100, h: 30 }), 0);
     const target = { x: 180, y: 135, w: 40, h: 30 };
-    const [moved] = settleCallouts([{ kind: "callout", x: 200, y: 150, at: [200, 150], text: "Click here", target }], grid, view);
+    const [moved] = settleMarks([{ kind: "callout", x: 200, y: 150, at: [200, 150], text: "Click here", target }], grid, view);
     const box = { x: moved.at[0] - 68, y: moved.at[1] - 19, w: 136, h: 38 };
     assert.ok(inkIn(grid, box) <= 1);
     assert.equal(overlapArea(box, [target]), 0);
     const quiet = { kind: "callout", x: 200, y: 150, at: [100, 250], text: "Click here" };
-    assert.equal(settleCallouts([quiet], grid, view)[0], quiet);
+    assert.equal(settleMarks([quiet], grid, view)[0], quiet);
+    const [tail] = settleMarks([{ kind: "arrow", from: [330, 150], to: [200, 215] }], grid, view);
+    assert.deepEqual(tail.to, [200, 215]);
+    assert.ok(tail.from[1] > 200 && inkIn(grid, { x: tail.from[0] - 12, y: tail.from[1] - 12, w: 24, h: 24 }) === 0);
+    const joined = { kind: "arrow", from: [330, 150], to: [200, 215] };
+    assert.equal(settleMarks([joined, { kind: "circle", x: 320, y: 140, w: 20, h: 20 }], grid, view)[0], joined);
 });
 
 test("3D stages take the most free room beside the circled thing and only ever clip a corner of it", () => {

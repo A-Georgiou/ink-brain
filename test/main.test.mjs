@@ -306,6 +306,17 @@ test("marks snap onto real controls before they are scaled, and the model hears 
     assert.match(result.text, /Drew 2 shapes on the user's screen, 1 snapped onto the control under it\./);
 });
 
+test("notes settle after snapping, so moving one is not reported as snapping and a failing capture still draws", async () => {
+    const calls = [];
+    const make = (calm) => new Surface({ overlayCall: async (method, params) => calls.push(params), geometry: () => ({ scale: 1 }), config: { annotationTtlSeconds: 45 }, snap: async (shapes) => shapes, calm });
+    const callout = { kind: "callout", x: 10, y: 20, at: [50, 60], text: "here" };
+    const moved = await make(async (shapes) => shapes.map((shape) => ({ ...shape, at: [300, 80] }))).execute("live_annotate", { shapes: [callout] });
+    assert.deepEqual(calls[0].shapes[0].at, [300, 80]);
+    assert.doesNotMatch(moved.text, /snapped/);
+    await make(async () => Promise.reject(new Error("no capture"))).execute("live_annotate", { shapes: [callout] });
+    assert.deepEqual(calls[1].shapes[0].at, [50, 60]);
+});
+
 test("panel render errors go back to the model so it can fix them", async () => {
     const { surface } = surfaceWith({ ok: false, error: "Parse error on line 2" });
     const result = await surface.execute("live_panel", { kind: "mermaid", id: "flow", content: "graph TD; A-->" });
