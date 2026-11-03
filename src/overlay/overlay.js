@@ -292,12 +292,24 @@ function createBubble() {
         const k = screenInk?.scale ?? 1;
         const quiet = screenInk && ((box) => inkIn(screenInk.grid, { x: box.x * k, y: box.y * k, w: box.w * k, h: box.h * k }));
         const spot = () => bubbleSpot({ w: el.offsetWidth, h: el.offsetHeight, view, bottomInset: state.pen ? 150 : 110, anchor, drawn, current: slot, ink: quiet });
+        // Where the screen is busy, a slimmer bubble can fit a quiet column instead of covering text.
+        const fit = () => {
+            const slimmed = el.classList.contains("slim");
+            el.classList.remove("slim");
+            const wide = spot();
+            if (!quiet || quiet(wide.box) < (wide.box.w * wide.box.h) / 1280) return wide;
+            el.classList.add("slim");
+            const slim = spot();
+            if (slim.box.h <= 280 && slim.cost < wide.cost && quiet(slim.box) * (slimmed ? 2 : 4) <= quiet(wide.box)) return slim;
+            el.classList.remove("slim");
+            return wide;
+        };
         el.classList.remove("tucked");
-        let pick = spot();
+        let pick = fit();
         // A finished answer with nowhere to go but over a panel tucks down to its header; hovering it opens it again.
         if (!active && overlapArea(pick.box, panels.rects()) > pick.box.w * pick.box.h * 0.08) {
             el.classList.add("tucked");
-            pick = spot();
+            pick = fit();
         }
         slot = pick.name;
         // A bubble that was hidden appears in place; one already on screen glides to its new spot.

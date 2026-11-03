@@ -582,6 +582,10 @@ body.listening #prompt::placeholder {
     transition: left 0.45s cubic-bezier(0.2, 0.8, 0.2, 1), top 0.45s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.25s ease;
 }
 
+#bubble.slim {
+    width: 280px;
+}
+
 #bubble.placing {
     transition: none;
 }
