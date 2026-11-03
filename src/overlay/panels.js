@@ -72,6 +72,14 @@ export class Panels {
         panel.frame?.contentWindow?.postMessage({ type: "step", index }, "*");
     }
 
+    // Tells a scene how much of its bottom the subtitles cover, so it frames the model above them.
+    inset(id, px) {
+        const panel = this.#panels.get(id);
+        if (!panel || panel.inset === px) return;
+        panel.inset = px;
+        if (panel.sent) panel.frame?.contentWindow?.postMessage({ type: "inset", px }, "*");
+    }
+
     async show({ id, kind, title, content, rect = {}, frameless = false, image = null }) {
         const isNew = !this.#panels.has(id);
         const panel = this.#open(id, kind, title, frameless);
@@ -388,6 +396,7 @@ export class Panels {
             event.source.postMessage({ kind: panel.pending.kind, content: panel.pending.content, image: panel.pending.image, inPlace: panel.el.classList.contains("frameless") }, "*");
             if (panel.added?.length) event.source.postMessage({ type: "steps", steps: panel.added }, "*");
             if (Number.isInteger(panel.step)) event.source.postMessage({ type: "step", index: panel.step }, "*");
+            if (Number.isFinite(panel.inset)) event.source.postMessage({ type: "inset", px: panel.inset }, "*");
             panel.sent = true;
         } else if (data.type === "rendered") {
             panel.pending?.finish({ ok: true });

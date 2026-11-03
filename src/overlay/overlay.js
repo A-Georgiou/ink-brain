@@ -370,6 +370,7 @@ const captions = (() => {
         el.classList.toggle("docked", Boolean(stage));
         if (stage) {
             Object.assign(el.style, { left: `${Math.round(stage.left + stage.width / 2)}px`, bottom: `${Math.round(innerHeight - stage.bottom + 14)}px`, maxWidth: `${Math.round(stage.width - 48)}px` });
+            panels.inset(scene, el.classList.contains("hidden") ? 0 : el.offsetHeight + 22);
             return;
         }
         const pill = bubble.rect();

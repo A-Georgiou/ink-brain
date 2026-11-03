@@ -9,8 +9,8 @@ import { arrowFor, baked, baseOf, clamp01, geometryFor, isFlat, isPoint, num, pe
 const PALETTE = ["#a371f7", "#58a6ff", "#3fb950", "#f2cc60", "#ff7b72", "#79c0ff", "#d2a8ff", "#ffa657"];
 const DURATION = { highlight: 1.4, camera: 1.3 };
 const DEG = Math.PI / 180;
-// Label pill and closed-label dot heights in CSS pixels.
-const [LABEL_PX, DOT_PX] = [18, 8];
+// Label callouts: pill height and font in CSS pixels, and how many open at once when no step picks them.
+const [PILL_PX, LABEL_FONT, MAX_OPEN] = [22, "600 12.5px -apple-system, system-ui, sans-serif", 6];
 // Surface finishes; physical ones need MeshPhysicalMaterial for clearcoat or transmission.
 const FINISHES = {
     metal: { metalness: 0.9, roughness: 0.25, color: "#c9d1d9" },
@@ -87,20 +87,10 @@ const isShown = (obj) => {
     return true;
 };
 
-// The marker a closed label shrinks to: a light dot in a dark ring.
-function dotTexture() {
-    const canvas = Object.assign(document.createElement("canvas"), { width: 32, height: 32 });
-    const ctx = canvas.getContext("2d");
-    for (const [r, fill] of [[15, "rgba(13, 17, 23, 0.85)"], [9, "#e6edf3"]]) {
-        ctx.fillStyle = fill;
-        ctx.beginPath();
-        ctx.arc(16, 16, r, 0, Math.PI * 2);
-        ctx.fill();
-    }
-    const texture = new THREE.CanvasTexture(canvas);
-    texture.colorSpace = THREE.SRGBColorSpace;
-    return texture;
-}
+const within = (obj, node) => {
+    for (let n = node; n; n = n.parent) if (n === obj) return true;
+    return false;
+};
 
 // spec: { view, camera, objects, steps, autoplay, stepSeconds, loop }; returns { step(index), dispose() }.
 export async function renderScene(spec, { root, makeLabel, inPlace = false }) {
@@ -127,16 +117,25 @@ export async function renderScene(spec, { root, makeLabel, inPlace = false }) {
     rim.position.set(-6, 4, -6);
     scene.add(new THREE.HemisphereLight(0xffffff, 0x30363d, 0.8), key, rim);
 
+    // Labels are callouts drawn on a 2D layer over the model, so they stay crisp and can point from beside it.
+    const ink = document.createElement("canvas");
+    ink.style.cssText = "position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none";
+    if (getComputedStyle(root).position === "static") root.style.position = "relative";
+    root.append(ink);
+    const pen = ink.getContext("2d");
+
     const flat = spec.view === "flat" || inPlace;
     const camera = new THREE.PerspectiveCamera(flat ? 30 : 42, width / height, 0.01, 5000);
-    // Narrated scenes keep their subtitles along the bottom, so the view is lifted above that strip.
-    const inset = spec.autoplay === false ? 110 : 0;
+    // Narrated scenes keep their subtitles along the bottom, so the view is lifted above them; the overlay reports their real height.
+    let inset = spec.autoplay === false ? 110 : 0;
     const applyView = () => {
         const [w, h] = size();
         camera.aspect = w / h;
         if (inset && h > inset * 2) camera.setViewOffset(w, h, 0, inset / 2, w, h);
         else camera.clearViewOffset();
         camera.updateProjectionMatrix();
+        const ratio = devicePixelRatio || 1;
+        [ink.width, ink.height] = [Math.round(w * ratio), Math.round(h * ratio)];
     };
     applyView();
     const controls = new OrbitControls(camera, renderer.domElement);
@@ -145,7 +144,6 @@ export async function renderScene(spec, { root, makeLabel, inPlace = false }) {
 
     // Labels open for what the current step is about (focus; null means all), the part under the pointer, and close while dragging.
     const labels = [];
-    const marker = dotTexture();
     let focus = null;
     let hovered = null;
     let dragging = false;
@@ -361,22 +359,11 @@ export async function renderScene(spec, { root, makeLabel, inPlace = false }) {
 
     function attachLabel(item, text) {
         const old = labels.findIndex((l) => l.item === item);
-        if (old >= 0) {
-            const { sprite, dot } = labels[old];
-            scene.remove(sprite, dot);
-            sprite.material.map?.dispose();
-            labels.splice(old, 1);
-        }
+        if (old >= 0) labels.splice(old, 1);
         if (!String(text ?? "").trim()) return;
-        const sprite = makeLabel(THREE, String(text).slice(0, 60), null, { size: 1 });
-        const dot = new THREE.Sprite(new THREE.SpriteMaterial({ map: marker, transparent: true, depthTest: false }));
-        for (const s of [sprite, dot]) {
-            s.material.sizeAttenuation = false;
-            s.userData.label = item;
-        }
-        dot.renderOrder = 9;
-        scene.add(sprite, dot);
-        labels.push({ item, sprite, dot, open: 0, lift: 0, shift: 0, fade: 1 });
+        const words = String(text).slice(0, 60);
+        pen.font = LABEL_FONT;
+        labels.push({ item, text: words, width: Math.ceil(pen.measureText(words).width) + 18, open: 0, fade: 1, local: null, hidden: false, box: null });
     }
 
     // Carves each object's cutters (openings, arches, cutaways) out of it; the cutters are not drawn.
@@ -496,6 +483,17 @@ export async function renderScene(spec, { root, makeLabel, inPlace = false }) {
     };
     const corners = (b) => [b.min.x, b.max.x].flatMap((x) => [b.min.y, b.max.y].flatMap((y) => [b.min.z, b.max.z].map((z) => new THREE.Vector3(x, y, z))));
     const union = (boxes) => boxes.reduce((box, part) => box.union(part), new THREE.Box3());
+    // The parts that set the frame: small fragments far from the rest do not shrink the model.
+    const robust = (boxes) => {
+        if (boxes.length < 5) return boxes;
+        const centres = boxes.map((b) => b.getCenter(new THREE.Vector3()));
+        const sizes = boxes.map((b) => b.getSize(new THREE.Vector3()).length());
+        const total = sizes.reduce((a, b) => a + b, 0) || 1;
+        const middle = centres.reduce((sum, c, i) => sum.addScaledVector(c, sizes[i] / total), new THREE.Vector3());
+        const spread = Math.sqrt(centres.reduce((sum, c, i) => sum + c.distanceToSquared(middle) * (sizes[i] / total), 0));
+        const biggest = Math.max(...sizes);
+        return boxes.filter((b, i) => sizes[i] > biggest * 0.2 || centres[i].distanceTo(middle) < spread * 2.2 + sizes[i]);
+    };
     const sphere = all.isEmpty() ? new THREE.Sphere(new THREE.Vector3(), 2) : all.getBoundingSphere(new THREE.Sphere());
     unit = Math.max(0.2, sphere.radius);
     const fitDistance = (radius) => (radius * 1.25) / Math.sin((camera.fov * DEG) / 2);
@@ -526,9 +524,11 @@ export async function renderScene(spec, { root, makeLabel, inPlace = false }) {
     const asked = isPoint(spec.camera?.position) ? v3(spec.camera.position).sub(looksAt) : null;
     const side = asked?.lengthSq() > 1e-9 ? asked : flat ? new THREE.Vector3(0, 0, 1) : new THREE.Vector3(0.55, 0.42, 0.85);
     for (const item of items.values()) if (item.def.hidden) item.obj.visible = false;
-    const opening = partBoxes(true);
-    const margin = inPlace ? 1 : 1.15;
-    const home = all.isEmpty() ? { target: new THREE.Vector3(), position: new THREE.Vector3(0, 0, 8) } : opening.length ? frame(union(opening), side, margin, opening) : frame(all, side, margin, partBoxes());
+    const opening = robust(partBoxes(true));
+    const margin = inPlace ? 1 : 1.12;
+    const home = all.isEmpty() ? { target: new THREE.Vector3(), position: new THREE.Vector3(0, 0, 8) } : opening.length ? frame(union(opening), side, margin, opening) : frame(all, side, margin, robust(partBoxes()));
+    // What the camera last framed, so a change in the subtitle height can frame it again.
+    let framed = opening.length ? opening : null;
     const distance = home.position.distanceTo(home.target);
     camera.near = Math.max(0.01, distance / 300);
     camera.far = distance * 300;
@@ -540,12 +540,27 @@ export async function renderScene(spec, { root, makeLabel, inPlace = false }) {
 
     for (const item of items.values()) if (item.def.label) attachLabel(item, item.def.label);
 
-    // When a step acts on a part that is out of view, the camera eases back out to fit everything shown.
+    // Eases the camera to frame boxes from where it looks now, unless that barely changes the view.
+    const frameTo = (boxes, duration = 1.1) => {
+        if (!boxes.length) return;
+        framed = boxes;
+        const to = frame(union(boxes), camera.position.clone().sub(controls.target), margin, boxes);
+        if (to.position.distanceTo(camera.position) < unit * 0.04 && to.target.distanceTo(controls.target) < unit * 0.04) return;
+        const [p0, t0] = [camera.position.clone(), controls.target.clone()];
+        controls.autoRotate = false;
+        tween(duration, 0, (k) => {
+            camera.position.lerpVectors(p0, to.position, smooth(k));
+            controls.target.lerpVectors(t0, to.target, smooth(k));
+        });
+    };
+
+    // When a step acts on a part that is out of view or under the subtitles, the camera eases back out to fit everything shown.
     let refit = 0;
     const keepInView = (actions) => {
+        const floor = -1 + (2 * inset) / size()[1];
         const outside = (p) => {
             const v = p.project(camera);
-            return Math.abs(v.x) > 1 || Math.abs(v.y) > 1;
+            return Math.abs(v.x) > 1 || v.y > 1 || v.y < floor;
         };
         const acted = actions.flatMap((a) => [a?.target, a?.from, a?.to]).filter((id) => typeof id === "string").map((id) => items.get(id.split("#")[0])?.obj);
         const lost = (obj) => {
@@ -553,14 +568,49 @@ export async function renderScene(spec, { root, makeLabel, inPlace = false }) {
             obj?.traverse((node) => (out ||= node.isMesh && isShown(node) && corners(new THREE.Box3().setFromObject(node)).some(outside)));
             return out;
         };
-        if (!acted.some(lost)) return;
-        const parts = partBoxes(true);
-        const to = frame(union(parts), camera.position.clone().sub(controls.target), margin, parts);
-        const [p0, t0] = [camera.position.clone(), controls.target.clone()];
-        tween(1.1, 0, (k) => {
-            camera.position.lerpVectors(p0, to.position, smooth(k));
-            controls.target.lerpVectors(t0, to.target, smooth(k));
-        });
+        if (acted.some(lost)) frameTo(robust(partBoxes(true)));
+    };
+
+    // Where a step's parts will be once its moves, turns and growth finish, so the camera frames the whole motion.
+    const reach = (item, actions) => {
+        const { obj } = item;
+        const saved = [obj.position.clone(), obj.rotation.clone(), obj.scale.clone()];
+        const box = new THREE.Box3();
+        const add = () => {
+            obj.updateMatrixWorld(true);
+            box.union(new THREE.Box3().setFromObject(obj));
+        };
+        if (obj.scale.lengthSq() < 1e-6) obj.scale.copy(item.shownScale);
+        add();
+        for (const a of actions) {
+            if (a?.target !== item.def.id) continue;
+            if (a.do === "move") obj.position.copy(isPoint(a.to) ? v3(a.to) : obj.position.clone().add(v3(a.by)));
+            else if (a.do === "rotate") obj.rotation.setFromVector3(isPoint(a.to) ? v3(a.to).multiplyScalar(DEG) : new THREE.Vector3(obj.rotation.x, obj.rotation.y, obj.rotation.z).add(v3(a.by).multiplyScalar(DEG)));
+            else if (a.do === "scale") obj.scale.copy(isPoint(a.to) ? v3(a.to) : new THREE.Vector3().setScalar(Math.max(0.0001, num(a.value, num(a.to, 1)))));
+            else if (a.do === "spin") {
+                const axis = ["x", "y", "z"].includes(a.axis) ? a.axis : "y";
+                for (let q = 0; q < 4; q++, obj.rotation[axis] += Math.PI / 2) add();
+            } else if (a.do === "explode") box.expandByScalar(box.getSize(new THREE.Vector3()).length() * 0.3 * Math.max(0, num(a.value, 1.6) - 1));
+            add();
+        }
+        [obj.position, obj.rotation, obj.scale].forEach((v, i) => v.copy(saved[i]));
+        obj.updateMatrixWorld(true);
+        return box;
+    };
+
+    // From the second step on, the camera moves in on the parts a step is about, keeping some of the model around them.
+    const focusStep = (index, actions) => {
+        if (index < 1 || flat || actions.some((a) => a?.do === "camera")) return;
+        const ids = new Set(actions.filter((a) => a && a.do !== "hide").flatMap((a) => [a.target, a.from, a.to, a.along]).filter((id) => typeof id === "string"));
+        const boxes = [...ids].map((id) => items.get(id) ?? items.get(id.split("#")[0])).filter(Boolean).map((item) => reach(item, actions)).filter((b) => !b.isEmpty());
+        for (const a of actions) for (const p of [a?.from, a?.to, ...(Array.isArray(a?.via) ? a.via : [])]) if (a?.do === "flow" && isPoint(p)) boxes.push(new THREE.Box3().setFromCenterAndSize(v3(p), new THREE.Vector3()));
+        const model = union(robust(partBoxes(true)));
+        if (!boxes.length || model.isEmpty()) return;
+        const part = union(boxes);
+        const [size, whole] = [part.getSize(new THREE.Vector3()), model.getSize(new THREE.Vector3())];
+        if (size.length() > whole.length() * 0.7) return frameTo(robust(partBoxes(true)));
+        const keep = new THREE.Vector3(Math.max(size.x, whole.x * 0.4), Math.max(size.y, whole.y * 0.4), Math.max(size.z, whole.z * 0.4));
+        frameTo([new THREE.Box3().setFromCenterAndSize(part.getCenter(new THREE.Vector3()), keep)]);
     };
 
     function show(item, duration, delay) {
@@ -747,6 +797,7 @@ export async function renderScene(spec, { root, makeLabel, inPlace = false }) {
         const found = focusOf(actions);
         if (found.size) focus = found;
         clearTimeout(refit);
+        focusStep(index, actions);
         if (!actions.some((a) => a?.do === "camera")) refit = setTimeout(() => keepInView(actions), 1400);
     }
 
@@ -772,6 +823,7 @@ export async function renderScene(spec, { root, makeLabel, inPlace = false }) {
         }
         camera.position.copy(home.position);
         controls.target.copy(home.target);
+        framed = opening.length ? opening : null;
         clearTimeout(refit);
         played = -1;
         focus = null;
@@ -793,62 +845,166 @@ export async function renderScene(spec, { root, makeLabel, inPlace = false }) {
         timer = setTimeout(tick, 700);
     }
 
-    // The label under the pointer: its dot, its open pill, or any part of its object.
+    // The label under the pointer: its pill or dot, else any part of a labelled object.
     const pick = () => {
         aimed = false;
         hovered = null;
+        if (dragging || !labels.length) return;
+        const r = renderer.domElement.getBoundingClientRect();
+        const [px, py] = [((pointer.x + 1) / 2) * r.width, ((1 - pointer.y) / 2) * r.height];
+        const hit = labels.find((l) => l.pill && l.open > 0.5 && px >= l.pill.left && px <= l.pill.left + l.width && py >= l.pill.top && py <= l.pill.top + PILL_PX) ?? labels.find((l) => l.screen && Math.hypot(px - l.screen.x, py - l.screen.y) < 9);
+        if (hit) return void (hovered = hit.item);
         const owners = new Map(labels.map((l) => [l.item.obj, l.item]));
-        const targets = labels.filter((l) => l.dot.visible).flatMap((l) => [l.dot, l.item.obj, ...(l.sprite.visible ? [l.sprite] : [])]);
-        if (dragging || !targets.length) return;
         ray.setFromCamera(pointer, camera);
-        let node = ray.intersectObjects(targets, true)[0]?.object;
-        while (node && !node.userData.label && !owners.has(node)) node = node.parent;
-        hovered = node?.userData.label ?? owners.get(node) ?? null;
+        ray.far = Infinity;
+        let node = ray.intersectObjects([...owners.keys()], true)[0]?.object;
+        while (node && !owners.has(node)) node = node.parent;
+        hovered = owners.get(node) ?? null;
     };
 
-    // Opens the labels that matter and closes the rest to dots; clashing focus labels lift clear, and open ones stay in view.
-    const declutter = (dt) => {
-        camera.updateMatrixWorld();
-        const [w, h] = size();
-        const tan = Math.tan((camera.fov * DEG) / 2);
-        const up = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion);
-        const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
-        const fit = (y) => Math.min(Math.max(y, LABEL_PX / 2 + 4), h - inset - LABEL_PX / 2 - 4);
-        const rank = (l) => (l.item === hovered ? 0 : focus?.has(l.item) ? 1 : 2);
-        const shown = labels.filter((l) => l.dot.visible).sort((a, b) => rank(a) - rank(b));
-        const placed = [];
-        for (const l of shown) {
-            const p = l.dot.position.clone().project(camera);
-            const perPixel = (2 * camera.position.distanceTo(l.dot.position) * tan) / h;
-            const width = LABEL_PX * (l.sprite.scale.x / l.sprite.scale.y);
-            const [ax, ay] = [(p.x + 1) * (w / 2), (1 - p.y) * (h / 2) - LABEL_PX / 2 - DOT_PX];
-            const x = Math.min(Math.max(ax, width / 2 + 4), w - width / 2 - 4);
-            // An open label keeps its place on a near miss, and a closed one waits for clear room, so neither flickers.
-            const pad = l.open > 0.5 ? -2 : 4;
-            const clash = (y) => placed.find((q) => Math.abs(x - q.x) < (width + q.width) / 2 + pad && Math.abs(y - q.y) < LABEL_PX + pad);
-            let y = fit(ay);
-            let open = !dragging && (!focus || rank(l) < 2);
-            if (open && rank(l) < 2) for (let q = clash(y), n = 0; q && n < 8; q = clash(y), n++) y = fit(q.y - LABEL_PX - 3);
-            else if (open && clash(y)) open = false;
-            if (open) placed.push({ x, y, width });
-            const k = Math.min(1, dt * 10);
-            l.open += ((open ? 1 : 0) - l.open) * Math.min(1, dt * 14);
-            l.lift += (ay - y - l.lift) * k;
-            l.shift += (x - ax - l.shift) * k;
-            const tall = (2 * LABEL_PX * tan * (0.85 + 0.15 * l.open)) / h;
-            l.sprite.scale.set(tall * (l.sprite.material.map.image.width / l.sprite.material.map.image.height), tall, 1);
-            l.sprite.position
-                .copy(l.dot.position)
-                .addScaledVector(up, (LABEL_PX / 2 + DOT_PX + l.lift) * perPixel)
-                .addScaledVector(right, l.shift * perPixel);
-            l.sprite.material.opacity = l.fade * l.open;
-            l.sprite.visible = l.open > 0.02;
+    // Opaque parts that can hide a label's spot; see-through shells and glowing flows never do.
+    const solids = () => {
+        const list = [];
+        scene.traverse((node) => {
+            const m = node.isMesh && isShown(node) && [node.material].flat()[0];
+            if (m && m.opacity >= 0.6 && m.blending !== THREE.AdditiveBlending) list.push(node);
+        });
+        return list;
+    };
+
+    // The spot on a labelled part nearest its middle that the camera can see, in the part's own frame so it rides along as the part moves.
+    const anchorOf = (l, blockers, tries) => {
+        const { obj } = l.item;
+        const box = new THREE.Box3().setFromObject(obj);
+        if (box.isEmpty()) return null;
+        const centre = box.getCenter(new THREE.Vector3());
+        l.bulk = box.getSize(new THREE.Vector3()).length();
+        const spots = [centre];
+        obj.traverse((node) => {
+            const pos = node.isMesh && isShown(node) && node.geometry?.attributes?.position;
+            if (!pos) return;
+            const stride = Math.max(1, Math.floor(pos.count / 12));
+            for (let i = 0; i < pos.count && spots.length < tries; i += stride) spots.push(new THREE.Vector3().fromBufferAttribute(pos, i).applyMatrix4(node.matrixWorld).lerp(centre, 0.08));
+        });
+        const middle = centre.clone().project(camera);
+        let [best, score] = [centre, Infinity];
+        for (const spot of spots) {
+            const toward = spot.clone().sub(camera.position);
+            const far = toward.length();
+            ray.set(camera.position, toward.divideScalar(far));
+            ray.far = far + unit * 0.01;
+            const hit = ray.intersectObjects(blockers, false)[0];
+            const mine = !hit || within(obj, hit.object);
+            const point = hit && mine ? hit.point : spot;
+            const p = point.clone().project(camera);
+            const cost = Math.hypot(p.x - middle.x, p.y - middle.y) + (mine ? 0 : 10);
+            if (cost < score) [best, score] = [point, cost];
         }
+        l.hidden = score >= 10;
+        return obj.worldToLocal(best.clone());
+    };
+
+    // How far from a point inside the rect, along a direction, until it leaves it.
+    const edgeDistance = (a, dx, dy, r) => {
+        if (a.x < r.x0 || a.x > r.x1 || a.y < r.y0 || a.y > r.y1) return 0;
+        const tx = dx > 0 ? (r.x1 - a.x) / dx : dx < 0 ? (r.x0 - a.x) / dx : Infinity;
+        const ty = dy > 0 ? (r.y1 - a.y) / dy : dy < 0 ? (r.y0 - a.y) / dy : Infinity;
+        return Math.min(tx, ty);
+    };
+
+    // Dots mark labelled parts; the open ones are callouts pushed out from the model's middle past its edge, joined by a leader line, never stacked over the part.
+    let refreshAt = 0;
+    let model = null;
+    const drawLabels = (dt) => {
+        const [w, h] = size();
+        const toScreen = (v) => {
+            const p = v.clone().project(camera);
+            return { x: (p.x + 1) * (w / 2), y: (1 - p.y) * (h / 2), z: p.z };
+        };
+        camera.updateMatrixWorld();
+        if (now >= refreshAt) {
+            refreshAt = now + 0.15;
+            const blockers = solids();
+            for (const l of labels) if (isShown(l.item.obj)) l.local = anchorOf(l, blockers, focus?.has(l.item) || l.item === hovered ? 40 : 12) ?? l.local;
+            const box = union(robust(partBoxes(true)));
+            model = box.isEmpty() ? null : corners(box).map(toScreen).reduce((r, p) => ({ x0: Math.min(r.x0, p.x), y0: Math.min(r.y0, p.y), x1: Math.max(r.x1, p.x), y1: Math.max(r.y1, p.y) }), { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity });
+        }
+        const ratio = devicePixelRatio || 1;
+        pen.setTransform(ratio, 0, 0, ratio, 0, 0);
+        pen.clearRect(0, 0, w, h);
+        const rank = (l) => (l.item === hovered ? 0 : focus?.has(l.item) ? 1 : 2);
+        const shown = labels.filter((l) => l.local && isShown(l.item.obj)).sort((a, b) => rank(a) - rank(b));
+        // Without a step to pick them, the biggest parts' labels open, a handful at most.
+        const open = new Set(dragging ? [] : shown.filter((l) => rank(l) < 2));
+        if (!focus && !dragging) for (const l of [...shown].sort((a, b) => (b.bulk ?? 0) - (a.bulk ?? 0)).slice(0, MAX_OPEN)) open.add(l);
+        const [cx, cy] = model ? [(model.x0 + model.x1) / 2, (model.y0 + model.y1) / 2] : [w / 2, h / 2];
+        const bottom = h - inset - 6;
+        const placed = [];
+        const drawn = [];
+        for (const l of shown) {
+            const m = materialsOf(l.item.obj)[0];
+            l.fade = m ? Math.min(1, m.opacity / Math.max(0.05, m.userData.opacity)) : 1;
+            l.open += ((open.has(l) ? 1 : 0) - l.open) * Math.min(1, dt * 12);
+            const a = toScreen(l.local.clone().applyMatrix4(l.item.obj.matrixWorld));
+            l.screen = a.z < 1 && a.x > -20 && a.x < w + 20 && a.y > -20 && a.y < bottom + 20 ? a : null;
+            if (!l.screen) continue;
+            drawn.push(l);
+            if (l.open < 0.02) {
+                l.pill = null;
+                continue;
+            }
+            let [dx, dy] = [a.x - cx, a.y - cy];
+            const len = Math.hypot(dx, dy);
+            [dx, dy] = len < 1 ? [0, -1] : [dx / len, dy / len];
+            const out = Math.min(170, Math.max(26, (model ? edgeDistance(a, dx, dy, model) : 0) + 18));
+            const clampX = (x) => Math.min(Math.max(x, 6), w - l.width - 6);
+            const clampY = (y) => Math.min(Math.max(y, 6), bottom - PILL_PX);
+            const left = clampX(dx >= 0 ? a.x + dx * out : a.x + dx * out - l.width);
+            let top = clampY(a.y + dy * out - PILL_PX / 2);
+            const clash = () => placed.find((q) => left < q.left + q.width + 6 && left + l.width + 6 > q.left && top < q.top + PILL_PX + 4 && top + PILL_PX + 4 > q.top);
+            for (let n = 0, q = clash(); q && n < 10; q = clash(), n++) top = clampY(a.y >= q.ay ? q.top + PILL_PX + 4 : q.top - PILL_PX - 4);
+            placed.push({ left, top, width: l.width, ay: a.y });
+            l.pill ??= { left, top };
+            const k = Math.min(1, dt * 10);
+            l.pill.left += (left - l.pill.left) * k;
+            l.pill.top += (top - l.pill.top) * k;
+        }
+        pen.font = LABEL_FONT;
+        pen.textBaseline = "middle";
+        for (const l of drawn.filter((d) => d.pill)) {
+            const [a, p] = [l.screen, l.pill];
+            pen.globalAlpha = l.fade * l.open;
+            pen.beginPath();
+            pen.moveTo(a.x, a.y);
+            pen.lineTo(Math.min(Math.max(a.x, p.left), p.left + l.width), Math.min(Math.max(a.y, p.top), p.top + PILL_PX));
+            pen.lineWidth = 1.5;
+            pen.strokeStyle = "rgba(230, 237, 243, 0.8)";
+            pen.stroke();
+            pen.beginPath();
+            pen.roundRect(p.left, p.top, l.width, PILL_PX, PILL_PX / 2);
+            pen.fillStyle = "rgba(13, 17, 23, 0.88)";
+            pen.fill();
+            pen.lineWidth = 1;
+            pen.strokeStyle = rank(l) < 2 ? "rgba(163, 113, 247, 0.95)" : "rgba(240, 246, 252, 0.22)";
+            pen.stroke();
+            pen.fillStyle = "#e6edf3";
+            pen.fillText(l.text, p.left + 9, p.top + PILL_PX / 2 + 0.5);
+        }
+        for (const l of drawn) {
+            pen.globalAlpha = l.fade * (l.hidden ? 0.55 : 1);
+            pen.beginPath();
+            pen.arc(l.screen.x, l.screen.y, 4, 0, Math.PI * 2);
+            pen.lineWidth = 2.5;
+            pen.strokeStyle = "rgba(13, 17, 23, 0.85)";
+            pen.stroke();
+            pen.fillStyle = rank(l) < 2 ? "#d2a8ff" : "#e6edf3";
+            pen.fill();
+        }
+        pen.globalAlpha = 1;
     };
 
     let raf = 0;
     let last = now;
-    const labelBox = new THREE.Box3();
     const loop = () => {
         raf = requestAnimationFrame(loop);
         now = performance.now() / 1000;
@@ -874,27 +1030,10 @@ export async function renderScene(spec, { root, makeLabel, inPlace = false }) {
                 d.scale.setScalar(0.45 + 0.55 * Math.sin(Math.PI * u));
             });
         }
-        const dotTall = (2 * DOT_PX * Math.tan((camera.fov * DEG) / 2)) / size()[1];
-        for (const l of labels) {
-            const { obj } = l.item;
-            l.dot.visible = isShown(obj);
-            if (!l.dot.visible) {
-                l.sprite.visible = false;
-                continue;
-            }
-            // A label's dot rides on top of its object wherever it moves, swings or grows.
-            labelBox.setFromObject(obj);
-            if (labelBox.isEmpty()) obj.getWorldPosition(l.dot.position);
-            else labelBox.getCenter(l.dot.position).setY(labelBox.max.y);
-            l.dot.scale.set(dotTall, dotTall, 1);
-            const m = materialsOf(obj)[0];
-            l.fade = m ? Math.min(1, m.opacity / Math.max(0.05, m.userData.opacity)) : 1;
-            l.dot.material.opacity = l.fade;
-        }
         if (aimed) pick();
-        declutter(dt);
         controls.update();
         renderer.render(scene, camera);
+        drawLabels(dt);
     };
     loop();
     const resize = new ResizeObserver(() => {
@@ -906,6 +1045,14 @@ export async function renderScene(spec, { root, makeLabel, inPlace = false }) {
     return {
         step,
         addSteps: (more) => steps.push(...more),
+        // The subtitles' real height, so the model is framed above them and never under them.
+        setInset(px) {
+            const next = Math.max(0, Math.min(Math.round(num(px, inset)), size()[1] * 0.45));
+            if (Math.abs(next - inset) < 4) return;
+            inset = next;
+            applyView();
+            if (framed) frameTo(framed, 0.5);
+        },
         dispose() {
             cancelAnimationFrame(raf);
             clearTimeout(timer);

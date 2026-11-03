@@ -5,6 +5,7 @@ let dispose = null;
 let stage = null;
 let pendingStep = -1;
 let pendingSteps = [];
+let pendingInset = null;
 
 const report = (message) => parent.postMessage(message, "*");
 const describe = (error) => String(error?.message ?? error).slice(0, 2000);
@@ -27,6 +28,11 @@ addEventListener("message", async (event) => {
         else pendingStep = Math.max(pendingStep, index);
         return;
     }
+    if (event.data.type === "inset") {
+        if (stage) stage.setInset?.(event.data.px);
+        else pendingInset = event.data.px;
+        return;
+    }
     const { kind, content, image } = event.data;
     const inPlace = event.data.inPlace === true;
     const imageUrl = typeof image === "string" && image.startsWith("data:image/") ? image : null;
@@ -36,6 +42,7 @@ addEventListener("message", async (event) => {
         stage = null;
         pendingStep = -1;
         pendingSteps = [];
+        pendingInset = null;
         root.replaceChildren();
         root.className = "";
         if (kind === "mermaid") await renderMermaid(String(content));
@@ -47,6 +54,7 @@ addEventListener("message", async (event) => {
                     ? await (await import("./scene.js")).renderScene(spec, { root, makeLabel, inPlace })
                     : await (await import("./board.js")).renderBoard(spec, { root });
             dispose = stage.dispose;
+            if (pendingInset !== null) stage.setInset?.(pendingInset);
             if (pendingSteps.length) stage.addSteps(pendingSteps.splice(0));
             if (pendingStep >= 0) stage.step(pendingStep);
         } else if (kind === "html") return renderHtml(String(content), imageUrl);
