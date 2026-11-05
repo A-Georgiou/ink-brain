@@ -4,7 +4,7 @@
 
 **Circle anything on your screen. Ask. See it explained.**
 
-An always-on companion for your Mac, built on GitHub Copilot. It sees what you point at, answers out loud and draws the explanation right on your screen.
+An always-on companion for your Mac, built on the GitHub Copilot SDK. It sees what you point at, answers out loud and draws the explanation right on your screen.
 
 **[inkbrain.app](https://inkbrain.app)**
 
@@ -40,6 +40,7 @@ Ink Brain lives in a transparent layer over your screen. Press the hotkey, circl
 - **Bring images to life.** Pull an image out of the screen, re-render it, or lay a live 3D or animated version over the original.
 - **Remember you.** Your projects, devices, preferences and past conversations stay on your Mac.
 - **Show you how.** With your approval, it moves the mouse and types to demonstrate a step, and stops the moment you move the mouse.
+- **Use the AI you already have.** Answer with GitHub Copilot, your ChatGPT Plus or Pro plan, a Claude or OpenAI API key, or local models in Ollama.
 - **Work with Copilot CLI and the Copilot app.** Any session can draw and speak on your screen, and you can send questions from the overlay to a session you already have open.
 
 ## How it works
@@ -55,7 +56,7 @@ flowchart LR
     main <-->|JSON lines| helper["Native helper (Swift)<br>screen capture, speech, input"]
 ```
 
-Each question sends one screenshot, plus a zoomed crop around your marks, to a Copilot session with Ink Brain's `live_*` tools. The model describes what it wants to show as data, such as shapes, boards and scenes, which the overlay validates and renders, so it rarely has to write code. Equations are typeset with [KaTeX](https://katex.org), 3D uses [three.js](https://threejs.org) with [three-bvh-csg](https://github.com/gkjohnson/three-bvh-csg) for cut-outs, sketches use [rough.js](https://roughjs.com) and the voice is [Kokoro](https://github.com/hexgrad/kokoro), running on-device.
+Each question sends one screenshot, plus a zoomed crop around your marks, to a Copilot SDK session with Ink Brain's `live_*` tools. It answers with GitHub Copilot or, through the SDK's bring-your-own-key support, with your ChatGPT plan, Claude, OpenAI or Ollama. The model describes what it wants to show as data, such as shapes, boards and scenes, which the overlay validates and renders, so it rarely has to write code. Equations are typeset with [KaTeX](https://katex.org), 3D uses [three.js](https://threejs.org) with [three-bvh-csg](https://github.com/gkjohnson/three-bvh-csg) for cut-outs, sketches use [rough.js](https://roughjs.com) and the voice is [Kokoro](https://github.com/hexgrad/kokoro), running on-device.
 
 ## Getting started
 
@@ -64,7 +65,7 @@ Each question sends one screenshot, plus a zoomed crop around your marks, to a C
 - macOS 14 or later, on Apple silicon or Intel
 - Node.js 22.12 or later
 - Xcode Command Line Tools, so `swiftc` can build the native helper
-- A GitHub Copilot subscription, signed in with the Copilot CLI (`copilot login`)
+- One way to answer: a GitHub Copilot plan, a ChatGPT Plus or Pro plan, a Claude or OpenAI API key, or [Ollama](https://ollama.com) with a model that can see images and use tools
 
 ### Install
 
@@ -83,7 +84,9 @@ npm install
 npm start
 ```
 
-On first launch, a setup card asks you to allow **Ink Brain Helper** to use Screen Recording, the Microphone and Speech Recognition, and optionally Accessibility, so marks snap onto the controls you mean and it can operate your Mac when you approve. After switching on Screen Recording in System Settings, click **Restart helper**. If you are not signed in to GitHub Copilot yet, **Sign in** on the same card runs `copilot login` in Terminal, and Ink Brain picks it up when you finish.
+On first launch, a setup card asks what should answer you, then asks you to allow **Ink Brain Helper** to use Screen Recording, the Microphone and Speech Recognition, and optionally Accessibility, so marks snap onto the controls you mean and it can operate your Mac when you approve. After switching on Screen Recording in System Settings, click **Restart helper**.
+
+Under **Answer with**, **GitHub Copilot** runs `copilot login` in Terminal if you are not signed in yet, **ChatGPT** signs in with your ChatGPT plan in the browser, **Claude** and **OpenAI** check an API key when you paste it, and **Ollama** finds the models on your Mac. Change it any time from **Set up...** in the menu bar.
 
 The neural voice model (about 90 MB) downloads on first launch, and Apple voices fill in until it is ready. Run `npm run doctor` at any time to check the helper, permissions, screen capture and voices.
 
@@ -126,8 +129,9 @@ Settings live in `~/.ink-brain/config.json`, which **Open settings file** in the
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `hotkey` | `Alt+Shift+Space` | Shortcut for pen mode, in Electron accelerator syntax (`Alt` is Option). |
-| `model` | `gpt-6.1-terra` | Model for the built-in session; if your plan cannot use it, Ink Brain uses `auto`, where Copilot picks the model. |
-| `reasoningEffort` | `null` | `null` runs each model at the effort that balances speed and quality best (medium for GPT-6.1 Terra, otherwise low; `auto` takes none). Higher effort plans more detailed visuals but takes longer to start talking. |
+| `provider` | `copilot` | What answers you: `copilot`, `chatgpt`, `anthropic`, `openai` or `ollama`. The setup card sets it, and API keys can also come from `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`. |
+| `model` | `gpt-6.1-terra` | Model for the built-in session. If your provider does not offer it, Ink Brain uses `auto` on GitHub Copilot, the newest Opus on Claude, `gpt-6.1-terra` on OpenAI and ChatGPT, or the first suitable Ollama model. |
+| `reasoningEffort` | `null` | `null` runs each model at the effort that balances speed and quality best (medium for GPT-6.1 Terra, otherwise low; `auto` and Ollama take none). Higher effort plans more detailed visuals but takes longer to start talking. |
 | `useCustomInstructions` | `false` | Load your Copilot custom instructions into the built-in session. |
 | `defaultTarget` | `auto` | `auto`, or `standalone` to always use the built-in session. |
 | `stayLive` | `false` | Start in hands-free mode. |
@@ -139,7 +143,7 @@ Settings live in `~/.ink-brain/config.json`, which **Open settings file** in the
 | `annotationTtlSeconds` | `45` | How long drawings stay. |
 | `explanationTtlSeconds` | `90` | How long an explanation's drawings stay after it ends. |
 | `control` | `ask` | `ask` lets Ink Brain request control of your Mac; `off` never allows it. |
-| `imageGeneration` | `true` | Let the built-in session generate images. |
+| `imageGeneration` | `true` | Let the built-in session generate images (GitHub Copilot only). |
 | `web` | `on` | `on` lets Ink Brain read web pages whenever an answer needs them; `ask` asks before each new site; `off` never allows it. |
 | `webSites` | `[]` | With `ask`, the sites you chose **Always allow** for, including their subdomains. |
 | `memory.enabled` | `true` | Remember facts, conversations and visuals. |
@@ -159,9 +163,10 @@ Settings live in `~/.ink-brain/config.json`, which **Open settings file** in the
 
 ## Privacy and security
 
-- Nothing is captured until you ask. Each question sends one screenshot, plus a zoomed crop around your marks, to the Copilot session you chose. The overlay is excluded from screenshots.
+- Nothing is captured until you ask. Each question sends one screenshot, plus a zoomed crop around your marks, to what you chose under **Answer with**: GitHub Copilot, OpenAI (including your ChatGPT plan), Anthropic, or Ollama on your Mac. The overlay is excluded from screenshots.
 - Speech recognition and the neural voice run on-device (unless you allow server speech).
 - Memory stays on your Mac in `~/.ink-brain/memory` (folders 0700, files 0600). Screen history records only the front app and window title, skips idle time and password managers, and is deleted after `memory.keepDays`.
+- API keys and your ChatGPT sign-in are encrypted with a key macOS keeps in your Keychain, in `~/.ink-brain/keys` (files 0600). Signing out of ChatGPT also ends the session at OpenAI.
 - The model is told to treat screen content, audio and web pages as untrusted data and not to read out secrets it can see. Remembered text reaches it labelled as data, never as instructions.
 - Web pages are read in a hidden, signed-out browser window with its own in-memory profile, which loads no images or media and refuses downloads and permissions. Set `web` to `ask` to approve each new site; every navigation then stays on sites you allowed.
 - Control of your Mac needs your approval of the listed steps, and stops when you press Esc, press the hotkey or move the mouse.
@@ -214,6 +219,8 @@ Narrow a run with `--only`, `--category` or `--repeat`.
 - Ink Brain starts talking within a few seconds, but the first visual of an explanation takes about 10 seconds to appear, or about 20 for a 3D model.
 - 3D models are most faithful when the picture shows the thing straight from the side, front or above, so its shape can be traced.
 - The web reader is signed out, so it cannot read private pages.
+- With an API key, your provider bills each question, and a question with its screenshots and instructions runs to tens of thousands of tokens.
+- **Continue with ChatGPT** uses OpenAI's Sign in with ChatGPT, which is in preview, and local models in Ollama are experimental.
 
 ## License
 
