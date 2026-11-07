@@ -70,10 +70,10 @@ Each question sends one screenshot, plus a zoomed crop around your marks, to a C
 ### Install
 
 ```bash
-curl -fsSL https://inkbrain.app/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/A-Georgiou/ink-brain/main/install.sh | bash
 ```
 
-The installer checks your Mac, offers to install Node.js and Copilot CLI if they are missing, then installs Ink Brain into `~/.ink-brain/app`, adds it to your Applications folder and starts it. Run it again to update; `curl -fsSL https://inkbrain.app/install.sh | bash -s -- --uninstall` removes it. You can [read the script](https://inkbrain.app/install.sh) first.
+The installer checks your Mac, offers to install Node.js if it is missing, then installs Ink Brain into `~/.ink-brain/app`, adds it to your Applications folder and starts it. Run it again to update; `curl -fsSL https://raw.githubusercontent.com/A-Georgiou/ink-brain/main/install.sh | bash -s -- --uninstall` removes it. You can [read the script](install.sh) first. The command on [inkbrain.app](https://inkbrain.app) runs the same script.
 
 To build from source instead:
 
