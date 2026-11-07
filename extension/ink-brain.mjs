@@ -44,7 +44,8 @@ export async function start({ joinSession, socketPath = SOCKET_PATH, autoLaunch 
     const tools = EXTENSION_TOOLS.map((spec) => ({
         ...spec,
         skipPermission: true,
-        defer: "never",
+        // live_panel adds about 12k tokens, so sessions find it through tool search when they need it.
+        defer: spec.name === "live_panel" ? "auto" : "never",
         handler: async (args) => toToolResult(await callTool(spec.name, args)),
     }));
     const session = await joinSession({ tools });
